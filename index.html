@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Velvet Notes</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="logo">
+          <div class="logo-mark"></div>
+          <div>
+            <h1>Velvet Notes</h1>
+            <p>Capture l'instant, sublime tes idées.</p>
+          </div>
+        </div>
+
+        <div class="quick-actions">
+          <button class="primary" id="newNoteButton">+ Nouvelle note</button>
+          <button class="ghost" id="clearButton">Tout effacer</button>
+        </div>
+
+        <div class="filter-card">
+          <h2>Rechercher</h2>
+          <div class="search-box">
+            <input
+              type="text"
+              id="searchInput"
+              placeholder="Titre, contenu, tag..."
+            />
+          </div>
+          <div class="tag-list" id="tagList"></div>
+        </div>
+
+        <div class="stats">
+          <div>
+            <span id="noteCount">0</span>
+            <small>Notes</small>
+          </div>
+          <div>
+            <span id="pinnedCount">0</span>
+            <small>Pins</small>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header>
+          <div>
+            <h2>Ton studio créatif</h2>
+            <p>Organise, filtre et illumine tes pensées.</p>
+          </div>
+          <div class="view-switch">
+            <button class="active" data-view="all">Toutes</button>
+            <button data-view="pinned">Épinglées</button>
+          </div>
+        </header>
+
+        <section class="editor">
+          <div class="editor-header">
+            <input
+              type="text"
+              id="noteTitle"
+              placeholder="Un titre qui frappe..."
+            />
+            <div class="editor-actions">
+              <select id="noteMood">
+                <option value="serein">Serein</option>
+                <option value="focus">Focus</option>
+                <option value="flash">Flash</option>
+                <option value="inspiration">Inspiration</option>
+              </select>
+              <button id="saveNote">Enregistrer</button>
+            </div>
+          </div>
+          <textarea
+            id="noteContent"
+            rows="6"
+            placeholder="Laisse couler tes idées ici..."
+          ></textarea>
+          <div class="editor-footer">
+            <input
+              type="text"
+              id="noteTag"
+              placeholder="Ajouter un tag (ex: projet, idée)"
+            />
+            <label class="pin-toggle">
+              <input type="checkbox" id="notePinned" />
+              <span>Épingler</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="note-grid" id="noteGrid"></section>
+      </main>
+    </div>
+
+    <div class="toast" id="toast">Note enregistrée ✨</div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -5,7 +5,10 @@
   "main": "channels/index.js",
   "scripts": {
     "telegram:test": "node channels/telegram.js test",
-    "telegram:webhook": "node channels/telegram-webhook.js"
+    "worker:deploy": "cd worker && npx wrangler deploy",
+    "worker:dev": "cd worker && npx wrangler dev",
+    "worker:secrets": "cd worker && npx wrangler secret put TELEGRAM_BOT_TOKEN && npx wrangler secret put ANTHROPIC_API_KEY && npx wrangler secret put ALLOWED_CHAT_ID",
+    "webhook:set": "node worker/setup-webhook.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",

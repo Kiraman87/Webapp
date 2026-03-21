@@ -1,0 +1,33 @@
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "description": "Send Claude Code notifications to Telegram",
+      "plugin": "./channels/telegram.js"
+    }
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /home/user/Webapp/channels/telegram.js stop"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /home/user/Webapp/channels/telegram.js notify"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "webapp-channels",
+  "version": "1.0.0",
+  "description": "Claude Code channels with Telegram plugin integration",
+  "main": "channels/index.js",
+  "scripts": {
+    "telegram:test": "node channels/telegram.js test",
+    "telegram:webhook": "node channels/telegram-webhook.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}

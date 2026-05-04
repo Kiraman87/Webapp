@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PMA Transportation Plan Mapping — Lyon · Saint-Étienne · Grenoble</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+<style>
+:root {
+  --ikea-blue: #0058A3;
+  --ikea-blue-dark: #003E7E;
+  --ikea-yellow: #FFDB00;
+  --ink: #111111;
+  --ink-2: #484848;
+  --ink-3: #767676;
+  --line: #E5E5E5;
+  --bg: #FAFAFA;
+  --panel: #FFFFFF;
+  --warn: #E04E2C;
+  --good: #0A8754;
+}
+[data-theme="dark"] {
+  --ink: #F5F5F5;
+  --ink-2: #BBBBBB;
+  --ink-3: #888888;
+  --line: #333333;
+  --bg: #0F1115;
+  --panel: #181B22;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; font-family: "Noto Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+body { display: grid; grid-template-rows: 64px 1fr; height: 100vh; overflow: hidden; }
+
+/* Header */
+header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  gap: 24px;
+  z-index: 100;
+}
+.brand {
+  display: flex; align-items: center; gap: 12px;
+  font-weight: 700; font-size: 18px; letter-spacing: -0.01em;
+}
+.brand-mark {
+  width: 40px; height: 26px; background: var(--ikea-yellow);
+  border-radius: 4px; display: grid; place-items: center;
+  color: var(--ikea-blue); font-weight: 800; font-size: 11px;
+  letter-spacing: 0.05em;
+}
+.brand-sub { font-weight: 400; color: var(--ink-3); font-size: 13px; margin-left: 8px; }
+
+.pma-tabs { display: flex; gap: 4px; margin-left: auto; }
+.pma-tab {
+  padding: 8px 16px; border-radius: 999px; cursor: pointer;
+  font-size: 13px; font-weight: 600; border: 1px solid var(--line);
+  background: transparent; color: var(--ink-2);
+  transition: all 0.15s;
+}
+.pma-tab:hover { color: var(--ink); border-color: var(--ink-3); }
+.pma-tab.active {
+  background: var(--ikea-blue); color: white; border-color: var(--ikea-blue);
+}
+
+/* Layout */
+.app { display: grid; grid-template-columns: 320px 1fr 360px; height: 100%; }
+@media (max-width: 1200px) { .app { grid-template-columns: 280px 1fr 320px; } }
+
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  padding: 20px;
+}
+.sidebar.right { border-right: none; border-left: 1px solid var(--line); }
+
+.section-title {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--ink-3); text-transform: uppercase;
+  margin: 0 0 12px 0;
+}
+.section { margin-bottom: 28px; }
+
+/* Service sub-tabs (Saint-Etienne) */
+.service-tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.service-tab {
+  flex: 1; min-width: 70px; padding: 8px 10px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+}
+.service-tab.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* Zone legend / toggle list */
+.zone-list { display: flex; flex-direction: column; gap: 6px; }
+.zone-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--bg); cursor: pointer; user-select: none;
+  border: 1px solid transparent;
+  transition: border-color 0.15s;
+}
+.zone-row:hover { border-color: var(--line); }
+.zone-row.disabled { opacity: 0.35; }
+.zone-swatch {
+  width: 16px; height: 16px; border-radius: 4px; flex-shrink: 0;
+  border: 2px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.1);
+}
+.zone-name {
+  flex: 1; font-size: 13px; font-weight: 600; line-height: 1.3;
+  min-width: 0;
+}
+.zone-name small { font-weight: 400; color: var(--ink-3); display: block; font-size: 11px; }
+.zone-count {
+  font-size: 12px; font-weight: 700; color: var(--ink-2);
+  background: var(--panel); padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line);
+}
+
+/* Map */
+.map-wrap { position: relative; }
+#map { width: 100%; height: 100%; background: var(--bg); }
+[data-theme="dark"] #map { filter: invert(1) hue-rotate(180deg); }
+[data-theme="dark"] .leaflet-marker-icon, [data-theme="dark"] .leaflet-popup, [data-theme="dark"] .leaflet-tile-pane .store-pin { filter: invert(1) hue-rotate(180deg); }
+
+.map-overlay {
+  position: absolute; top: 16px; left: 16px; z-index: 500;
+  background: var(--panel); border-radius: 8px;
+  padding: 12px 14px; font-size: 12px;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  max-width: 280px;
+}
+.map-overlay strong { color: var(--ink); font-size: 14px; }
+.map-overlay .meta { color: var(--ink-3); margin-top: 4px; }
+
+.map-mode-switch {
+  position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+  z-index: 500; display: flex; gap: 0;
+  background: var(--panel); border-radius: 999px; padding: 4px;
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+}
+.mode-btn {
+  padding: 8px 16px; border-radius: 999px; cursor: pointer;
+  font-size: 12px; font-weight: 600; border: none;
+  background: transparent; color: var(--ink-2);
+}
+.mode-btn.active { background: var(--ikea-blue); color: white; }
+
+/* Stats panel (right) */
+.stat-card {
+  padding: 14px; background: var(--bg); border-radius: 8px;
+  margin-bottom: 8px; border: 1px solid var(--line);
+}
+.stat-num { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; color: var(--ink); }
+.stat-label { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; font-weight: 600; }
+
+.bar-chart { display: flex; flex-direction: column; gap: 8px; }
+.bar-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.bar-label { width: 70px; flex-shrink: 0; font-weight: 600; }
+.bar-track { flex: 1; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+.bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+.bar-val { width: 38px; text-align: right; color: var(--ink-3); font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.insight {
+  padding: 12px 14px; border-radius: 8px; margin-bottom: 8px;
+  font-size: 12px; line-height: 1.5; border: 1px solid var(--line);
+  background: var(--bg);
+}
+.insight-title {
+  font-weight: 700; font-size: 12px; margin-bottom: 4px;
+  display: flex; align-items: center; gap: 6px;
+}
+.insight-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.insight code {
+  font-family: "SF Mono", Menlo, monospace; font-size: 11px;
+  background: var(--panel); padding: 1px 5px; border-radius: 3px;
+  border: 1px solid var(--line);
+}
+
+/* Loading */
+.loading-overlay {
+  position: fixed; inset: 0; background: var(--bg);
+  display: grid; place-items: center; z-index: 9999;
+  flex-direction: column; gap: 16px;
+}
+.loading-overlay .pulse {
+  width: 60px; height: 40px; background: var(--ikea-yellow);
+  border-radius: 6px; display: grid; place-items: center;
+  color: var(--ikea-blue); font-weight: 800;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.loading-overlay p { color: var(--ink-3); font-size: 13px; margin-top: 16px; }
+
+/* Leaflet popup styling */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px; padding: 4px;
+}
+.cp-popup { font-size: 13px; line-height: 1.5; }
+.cp-popup b { color: var(--ikea-blue); font-size: 14px; }
+.cp-popup .ta-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-weight: 700; font-size: 11px; color: white; margin-top: 4px;
+}
+
+/* Store marker */
+.store-pin {
+  width: 36px; height: 36px;
+  background: var(--ikea-blue); border-radius: 50%;
+  border: 3px solid var(--ikea-yellow);
+  display: grid; place-items: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  position: relative;
+}
+.store-pin::after {
+  content: ""; position: absolute; bottom: -8px; left: 50%;
+  transform: translateX(-50%);
+  width: 0; height: 0; border: 6px solid transparent;
+  border-top-color: var(--ikea-blue); margin-top: -2px;
+}
+.store-pin span {
+  color: var(--ikea-yellow); font-weight: 800; font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+/* All-PMA mode styles */
+.legend-pma {
+  display: flex; gap: 8px; margin-bottom: 12px;
+}
+.legend-pma-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600;
+}
+.legend-pma-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+/* Scrollbar */
+.sidebar::-webkit-scrollbar { width: 8px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  .sidebar.right, .sidebar { max-height: 200px; }
+}
+</style>
+</head>
+<body>
+<div class="loading-overlay" id="loading">
+  <div class="pulse">IKEA</div>
+  <p>Loading postal code geometry…</p>
+</div>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark">IKEA</div>
+    PMA Transportation Mapping
+    <span class="brand-sub">Lyon · Saint-Étienne · Grenoble</span>
+  </div>
+  <div class="pma-tabs" id="pma-tabs">
+    <button class="pma-tab active" data-pma="lyon">Lyon</button>
+    <button class="pma-tab" data-pma="saintEtienne">Saint-Étienne</button>
+    <button class="pma-tab" data-pma="grenoble">Grenoble</button>
+    <button class="pma-tab" data-pma="all">All 3 (compare)</button>
+  </div>
+</header>
+
+<div class="app">
+  <aside class="sidebar" id="left-sidebar">
+    <div class="section" id="store-section">
+      <h3 class="section-title">IKEA Store</h3>
+      <div id="store-info"></div>
+    </div>
+
+    <div class="section" id="service-section" style="display:none">
+      <h3 class="section-title">Service Type</h3>
+      <div class="service-tabs" id="service-tabs"></div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Transport Areas</h3>
+      <div class="zone-list" id="zone-list"></div>
+    </div>
+  </aside>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div class="map-overlay" id="map-overlay">
+      <strong id="overlay-title">Lyon PMA</strong>
+      <div class="meta" id="overlay-meta">Loading…</div>
+    </div>
+    <div class="map-mode-switch">
+      <button class="mode-btn active" data-mode="markers">Markers</button>
+      <button class="mode-btn" data-mode="zones">Zone fill</button>
+      <button class="mode-btn" data-mode="heat">Heatmap</button>
+    </div>
+  </div>
+
+  <aside class="sidebar right">
+    <div class="section">
+      <h3 class="section-title">Coverage Snapshot</h3>
+      <div id="snapshot"></div>
+    </div>
+    <div class="section">
+      <h3 class="section-title">Distribution by TA</h3>
+      <div class="bar-chart" id="bar-chart"></div>
+    </div>
+    <div class="section">
+      <h3 class="section-title">Optimization Insights</h3>
+      <div id="insights"></div>
+    </div>
+  </aside>
+</div>
+
+<script src="data/mappings.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

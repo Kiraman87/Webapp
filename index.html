@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Cartographie PMA — Multi-flux · Lyon · Saint-Étienne · Grenoble</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+
+<style>
+:root {
+  --ikea-blue: #0058A3;
+  --ikea-blue-dark: #003E7E;
+  --ikea-yellow: #FFDB00;
+  --ink: #111111;
+  --ink-2: #484848;
+  --ink-3: #767676;
+  --line: #E5E5E5;
+  --bg: #FAFAFA;
+  --panel: #FFFFFF;
+  --warn: #E04E2C;
+  --good: #0A8754;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; font-family: "Noto Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+body { display: grid; grid-template-rows: 60px 1fr 240px; height: 100vh; overflow: hidden; }
+
+/* Header */
+header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  z-index: 100;
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-weight: 700; font-size: 16px; letter-spacing: -0.01em;
+}
+.brand-mark {
+  width: 38px; height: 24px; background: var(--ikea-yellow);
+  border-radius: 4px; display: grid; place-items: center;
+  color: var(--ikea-blue); font-weight: 800; font-size: 10px;
+}
+.brand-sub { font-weight: 400; color: var(--ink-3); font-size: 12px; }
+
+/* Header search */
+.header-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; position: relative; }
+.cp-search {
+  padding: 8px 12px 8px 32px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23767676' stroke-width='2.5' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>") no-repeat 10px center;
+  font-family: inherit; font-size: 13px; width: 180px; color: var(--ink);
+}
+.cp-search:focus { outline: 2px solid var(--ikea-blue); outline-offset: -1px; }
+.action-btn {
+  padding: 8px 12px; border-radius: 8px; cursor: pointer;
+  font-size: 12px; font-weight: 600; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink-2);
+  font-family: inherit;
+}
+.action-btn:hover { border-color: var(--ink-3); color: var(--ink); }
+.action-btn.primary { background: var(--ikea-blue); color: white; border-color: var(--ikea-blue); }
+
+/* Layout */
+.app { display: grid; grid-template-columns: 320px 1fr 360px; height: 100%; min-height: 0; overflow: hidden; }
+@media (max-width: 1300px) { .app { grid-template-columns: 280px 1fr 320px; } }
+
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  padding: 16px;
+}
+.sidebar.right { border-right: none; border-left: 1px solid var(--line); }
+
+.section-title {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--ink-3); text-transform: uppercase;
+  margin: 0 0 10px 0;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.section { margin-bottom: 22px; }
+
+/* PMA picker (multi-select chip list) */
+.pma-picker { display: flex; flex-direction: column; gap: 6px; }
+.pma-chip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--line);
+  cursor: pointer; user-select: none;
+  transition: all 0.15s;
+}
+.pma-chip:hover { border-color: var(--ink-3); }
+.pma-chip.active { border-color: var(--ink); background: var(--panel); box-shadow: 0 0 0 1px var(--ink) inset; }
+.pma-chip-dot {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line);
+}
+.pma-chip-name { font-size: 13px; font-weight: 600; flex: 1; }
+.pma-chip-meta { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.pma-chip .check {
+  width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid var(--ink-3);
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.pma-chip.active .check { background: var(--ikea-blue); border-color: var(--ikea-blue); color: white; }
+.pma-chip .check svg { display: none; }
+.pma-chip.active .check svg { display: block; }
+
+/* Flux filters */
+.flux-list { display: flex; flex-direction: column; gap: 6px; }
+.flux-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  background: var(--bg); border: 1px solid var(--line);
+  font-size: 12px; user-select: none;
+}
+.flux-row.disabled { opacity: 0.35; }
+.flux-row .flux-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.flux-row .flux-name { flex: 1; font-weight: 700; }
+.flux-row .flux-desc { font-size: 10px; color: var(--ink-3); font-weight: 400; display:block; margin-top: 2px;}
+.flux-row .flux-count { font-size: 11px; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* Unit selector */
+.unit-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.unit-tab {
+  padding: 6px 10px; border-radius: 999px; cursor: pointer;
+  font-size: 11px; font-weight: 600; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink-2); font-family: inherit;
+}
+.unit-tab.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* Map */
+.map-wrap { position: relative; min-height: 0; }
+#map { width: 100%; height: 100%; background: var(--bg); }
+
+.map-overlay {
+  position: absolute; top: 12px; left: 12px; z-index: 500;
+  background: var(--panel); border-radius: 8px;
+  padding: 10px 12px; font-size: 12px;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  max-width: 280px;
+}
+.map-overlay strong { color: var(--ink); font-size: 13px; }
+.map-overlay .meta { color: var(--ink-3); margin-top: 3px; line-height: 1.5; font-size: 11px; }
+
+.map-mode-switch {
+  position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 500; display: flex; gap: 0;
+  background: var(--panel); border-radius: 999px; padding: 3px;
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+}
+.mode-btn {
+  padding: 6px 14px; border-radius: 999px; cursor: pointer;
+  font-size: 11px; font-weight: 600; border: none;
+  background: transparent; color: var(--ink-2);
+  font-family: inherit;
+}
+.mode-btn.active { background: var(--ikea-blue); color: white; }
+
+.basemap-switch {
+  position: absolute; top: 12px; right: 12px; z-index: 500;
+  display: flex; gap: 0;
+  background: var(--panel); border-radius: 8px; padding: 3px;
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+.basemap-btn {
+  padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 11px; font-weight: 600; border: none;
+  background: transparent; color: var(--ink-2);
+  font-family: inherit;
+}
+.basemap-btn.active { background: var(--ink); color: var(--bg); }
+
+/* Right panel */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.stat-card {
+  padding: 10px; background: var(--bg); border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.stat-num { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.stat-label { font-size: 10px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; font-weight: 600; }
+
+.bar-chart { display: flex; flex-direction: column; gap: 6px; }
+.bar-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.bar-label { width: 80px; flex-shrink: 0; font-weight: 600; }
+.bar-track { flex: 1; height: 7px; background: var(--bg); border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+.bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+.bar-val { width: 56px; text-align: right; color: var(--ink-3); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 11px; }
+
+.insight {
+  padding: 10px 12px; border-radius: 8px; margin-bottom: 6px;
+  font-size: 11px; line-height: 1.5; border: 1px solid var(--line);
+  background: var(--bg);
+}
+.insight-title {
+  font-weight: 700; font-size: 11px; margin-bottom: 4px;
+  display: flex; align-items: center; gap: 6px;
+}
+.insight-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* Bottom panel — département tables */
+.dept-panel {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  overflow: hidden;
+}
+.dept-col {
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+}
+.dept-col:last-child { border-right: none; }
+.dept-header {
+  padding: 8px 12px; background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+}
+.dept-title {
+  font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  display: flex; align-items: center; gap: 6px;
+}
+.dept-title-dot { width: 8px; height: 8px; border-radius: 50%; }
+.dept-meta { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.dept-table { overflow-y: auto; flex: 1; min-height: 0; font-size: 11px; }
+.dept-table table { width: 100%; border-collapse: collapse; }
+.dept-table th {
+  position: sticky; top: 0; background: var(--panel); z-index: 1;
+  padding: 6px 8px; text-align: left; font-size: 10px;
+  color: var(--ink-3); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--line);
+}
+.dept-table td {
+  padding: 5px 8px; border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.dept-table tr:hover { background: var(--bg); cursor: pointer; }
+.dept-table .ta-pill {
+  display: inline-block; padding: 1px 6px; border-radius: 999px;
+  font-size: 9px; font-weight: 700; color: white;
+}
+.dept-table .pma-pill {
+  display: inline-block; padding: 1px 6px; border-radius: 4px;
+  font-size: 10px; font-weight: 600;
+  background: var(--bg); border: 1px solid var(--line);
+}
+.dept-foot {
+  padding: 6px 12px; background: var(--bg);
+  border-top: 1px solid var(--line); font-size: 11px; font-weight: 700;
+  display: flex; justify-content: space-between;
+  flex-shrink: 0;
+}
+
+/* Loading */
+.loading-overlay {
+  position: fixed; inset: 0; background: var(--bg);
+  display: grid; place-items: center; z-index: 9999;
+}
+.loading-inner { text-align: center; }
+.loading-overlay .pulse {
+  width: 60px; height: 40px; background: var(--ikea-yellow);
+  border-radius: 6px; display: grid; place-items: center;
+  color: var(--ikea-blue); font-weight: 800;
+  animation: pulse 1.2s ease-in-out infinite;
+  margin: 0 auto;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.loading-overlay p { color: var(--ink-3); font-size: 13px; margin-top: 16px; }
+.loading-bar { width: 220px; height: 4px; background: var(--line); border-radius: 2px; margin: 12px auto 0; overflow: hidden; }
+.loading-bar-fill { height: 100%; background: var(--ikea-blue); width: 0%; transition: width 0.3s; }
+
+/* Leaflet popup */
+.leaflet-popup-content-wrapper { border-radius: 8px; padding: 4px; }
+.cp-popup { font-size: 12px; line-height: 1.5; min-width: 200px; }
+.cp-popup b { color: var(--ikea-blue); font-size: 14px; }
+.cp-popup .ta-tag {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-weight: 700; font-size: 10px; color: white; margin-top: 4px;
+}
+.cp-popup .meta-row { color: var(--ink-3); font-size: 11px; margin-top: 4px; }
+.cp-popup table { width: 100%; margin-top: 6px; font-size: 11px; }
+.cp-popup table td { padding: 2px 4px; }
+.cp-popup table td:first-child { color: var(--ink-3); }
+.cp-popup table td:last-child { text-align: right; font-weight: 600; }
+
+/* Store marker */
+.store-pin {
+  width: 38px; height: 38px;
+  background: var(--ikea-blue); border-radius: 50%;
+  border: 3px solid var(--ikea-yellow);
+  display: grid; place-items: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.store-pin span {
+  color: var(--ikea-yellow); font-weight: 800; font-size: 11px;
+}
+
+/* Scrollbars */
+.sidebar::-webkit-scrollbar, .dept-table::-webkit-scrollbar { width: 6px; }
+.sidebar::-webkit-scrollbar-track, .dept-table::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb, .dept-table::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+
+/* Empty state */
+.empty {
+  text-align: center; padding: 30px 20px; color: var(--ink-3);
+  font-size: 12px; line-height: 1.5;
+}
+
+/* Sub-tabs (zone filter) */
+.sub-tabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+.sub-tab {
+  padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  font-size: 11px; font-weight: 600; border: 1px solid var(--line);
+  background: var(--bg); color: var(--ink-2); font-family: inherit;
+}
+.sub-tab.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+
+/* CP search dropdown */
+.cp-results {
+  position: absolute; top: 44px; right: 0; width: 280px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12); z-index: 1000;
+  max-height: 320px; overflow-y: auto;
+}
+.cp-result-item {
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+  cursor: pointer; font-size: 12px; line-height: 1.4;
+}
+.cp-result-item:hover { background: var(--bg); }
+.cp-result-item:last-child { border-bottom: none; }
+.cp-result-item b { color: var(--ikea-blue); }
+.cp-result-item small { color: var(--ink-3); display: block; }
+</style>
+</head>
+<body>
+<div class="loading-overlay" id="loading">
+  <div class="loading-inner">
+    <div class="pulse">IKEA</div>
+    <p id="loading-msg">Chargement des données…</p>
+    <div class="loading-bar"><div class="loading-bar-fill" id="loading-bar"></div></div>
+  </div>
+</div>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark">IKEA</div>
+    <div>Cartographie PMA <span class="brand-sub">· Multi-flux</span></div>
+  </div>
+  <div class="header-tools">
+    <input type="text" class="cp-search" id="cp-search" placeholder="Rechercher un CP…" maxlength="5">
+    <button class="action-btn" id="export-csv">Export CSV</button>
+  </div>
+</header>
+
+<div class="app">
+  <aside class="sidebar" id="left-sidebar">
+
+    <div class="section">
+      <h3 class="section-title">PMA actives <span id="pma-count" style="color:var(--ink);font-weight:800">0</span></h3>
+      <div class="pma-picker" id="pma-picker"></div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Filtres flux</h3>
+      <div class="flux-list" id="flux-list"></div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Filtres TA / Zone</h3>
+      <div class="sub-tabs" id="zone-filter-tabs">
+        <button class="sub-tab active" data-zone="all">Toutes</button>
+        <button class="sub-tab" data-zone="1">TA1 · 0-45min</button>
+        <button class="sub-tab" data-zone="2">TA2 · 45-60</button>
+        <button class="sub-tab" data-zone="3">TA3 · 60-110</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3 class="section-title">Unité affichée</h3>
+      <div class="unit-tabs" id="unit-tabs">
+        <button class="unit-tab active" data-unit="cp">CP</button>
+        <button class="unit-tab" data-unit="population">Population</button>
+        <button class="unit-tab" data-unit="distance">Distance km</button>
+        <button class="unit-tab" data-unit="time">Temps h</button>
+        <button class="unit-tab" data-unit="zone">Zone TA</button>
+      </div>
+    </div>
+
+  </aside>
+
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div class="map-overlay" id="map-overlay">
+      <strong id="overlay-title">Aucune PMA sélectionnée</strong>
+      <div class="meta" id="overlay-meta">Cochez une ou plusieurs PMA dans le panneau de gauche</div>
+    </div>
+    <div class="basemap-switch">
+      <button class="basemap-btn active" data-base="light">Clair</button>
+      <button class="basemap-btn" data-base="terrain">Terrain</button>
+      <button class="basemap-btn" data-base="dark">Sombre</button>
+    </div>
+    <div class="map-mode-switch">
+      <button class="mode-btn active" data-mode="polygons">Polygones</button>
+      <button class="mode-btn" data-mode="markers">Pastilles</button>
+      <button class="mode-btn" data-mode="heat">Chaleur</button>
+    </div>
+  </div>
+
+  <aside class="sidebar right">
+    <div class="section">
+      <h3 class="section-title">Synthèse sélection</h3>
+      <div class="stat-grid" id="stat-grid"></div>
+    </div>
+    <div class="section">
+      <h3 class="section-title">Répartition par TA</h3>
+      <div class="bar-chart" id="bar-chart"></div>
+    </div>
+    <div class="section">
+      <h3 class="section-title">Répartition par flux</h3>
+      <div class="bar-chart" id="flux-chart"></div>
+    </div>
+    <div class="section">
+      <h3 class="section-title">Pistes d'optimisation</h3>
+      <div id="insights"></div>
+    </div>
+  </aside>
+</div>
+
+<div class="dept-panel" id="dept-panel"></div>
+
+<script src="data/mappings.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

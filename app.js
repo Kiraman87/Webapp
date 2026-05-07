@@ -357,12 +357,79 @@ function clearLayers() {
 // ============================================================
 // Logistics chain layer (CDC + LSC nodes + flow lines)
 // ============================================================
-function nodeCoord(nodes, key) {
-  const n = nodes[key];
-  if (!n) return null;
-  if (n.lat != null && n.lng != null) return { lat: n.lat, lng: n.lng };
-  if (n.parent && nodes[n.parent]) return { lat: nodes[n.parent].lat, lng: nodes[n.parent].lng };
-  return null;
+const HUB_COLORS = {
+  'IKEA':    { roof: '#FFDB00', body: '#0058A3' },
+  'XPO':     { roof: '#FF8A80', body: '#C62828' },
+  'JP Home': { roof: '#FFD54F', body: '#E65100' },
+};
+
+function hubIcon(node, isSmall) {
+  const c  = HUB_COLORS[node.operator] || { roof: '#9CA3AF', body: '#4B5563' };
+  const code = (node.code || '').replace(/^CDC /, '').replace(/^LSC/, '');
+  const op = node.operator || '';
+  const W = isSmall ? 44 : 56, H = isSmall ? 42 : 52;
+  const rPts = isSmall ? '22,2 42,16 2,16' : '28,2 54,20 2,20';
+  const [bX,bY,bW,bH] = isSmall ? [3,16,38,24] : [3,20,50,30];
+  const [wY,wH,wW,w1X,w2X] = isSmall ? [21,6,8,6,30] : [26,7,10,7,39];
+  const [dX,dY,dW,dH] = isSmall ? [17,27,10,13] : [22,33,12,17];
+  const [tX,tY,fS] = isSmall ? [W/2,38,9] : [W/2,47,10];
+  const totalH = H + 11;
+  const html = `<div style="text-align:center;display:inline-block;filter:drop-shadow(0 4px 12px rgba(0,0,0,.55))">
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="${rPts}" fill="${c.roof}"/>
+      <rect x="${bX}" y="${bY}" width="${bW}" height="${bH}" rx="3" fill="${c.body}"/>
+      <rect x="${dX}" y="${dY}" width="${dW}" height="${dH}" rx="2" fill="rgba(0,0,0,.32)"/>
+      <rect x="${w1X}" y="${wY}" width="${wW}" height="${wH}" rx="1" fill="rgba(255,255,255,.42)"/>
+      <rect x="${w2X}" y="${wY}" width="${wW}" height="${wH}" rx="1" fill="rgba(255,255,255,.42)"/>
+      <text x="${tX}" y="${tY}" text-anchor="middle" fill="white" font-size="${fS}" font-weight="900" font-family="system-ui,sans-serif">${code}</text>
+    </svg>
+    <div style="background:${c.body};color:rgba(255,255,255,.88);font-size:7px;font-weight:800;padding:1px 5px;border-radius:0 0 3px 3px;letter-spacing:.06em;font-family:system-ui,sans-serif;line-height:1.5;margin-top:-2px">${op}</div>
+  </div>`;
+  return L.divIcon({ className: '', html, iconSize: [W, totalH], iconAnchor: [W/2, totalH] });
+}
+
+function addArrowLine(from, to, color, dashed) {
+  layers.logistics.push(
+    L.polyline([from, to], {
+      color, weight: dashed ? 2.2 : 2.8, opacity: .8,
+      dashArray: dashed ? '6 5' : null, interactive: false,
+    }).addTo(map)
+  );
+  const t = 0.78;
+  const aLat = from[0] + (to[0]-from[0])*t, aLng = from[1] + (to[1]-from[1])*t;
+  const angle = Math.atan2(to[1]-from[1], to[0]-from[0]) * 180/Math.PI;
+  layers.logistics.push(
+    L.marker([aLat, aLng], {
+      icon: L.divIcon({
+        className: '',
+        html: `<div style="font-size:16px;color:${color};line-height:1;transform:rotate(${angle}deg);filter:drop-shadow(0 0 2px white);font-weight:900">▲</div>`,
+        iconSize: [16,16], iconAnchor: [8,8],
+      }),
+      interactive: false, zIndexOffset: 700,
+    }).addTo(map)
+  );
+}
+
+function nodePopup(nodeKey, nodes, connections) {
+  const n = nodes[nodeKey];
+  const c = HUB_COLORS[n.operator] || { body: '#4B5563' };
+  const storesServed = [...new Set(connections.filter(x => x.lsc===nodeKey || (x.cdc===nodeKey && !x.lsc)).map(x => x.storeCode))];
+  const pmasServed   = [...new Set(storesServed.map(s => M.stores[s]?.pma || s))];
+  return `<div class="cp-popup">
+    <div class="popup-hdr" style="background:${c.body}">
+      <div class="popup-cp">${nodeKey}</div>
+      <div class="popup-name">${n.label}</div>
+    </div>
+    <div class="popup-body">
+      <table class="popup-tbl">
+        <tr><td>Opérateur</td><td>${n.operator||'—'}</td></tr>
+        <tr><td>Adresse</td><td style="font-size:10px;line-height:1.3">${n.address||'—'}</td></tr>
+        <tr><td>Flux</td><td>${n.flux||'multi'}</td></tr>
+        ${pmasServed.length ? `<tr><td>PMA servis</td><td>${pmasServed.join(', ')}</td></tr>` : ''}
+      </table>
+      ${n.description ? `<div style="margin-top:9px;font-size:10px;color:var(--ink-3);line-height:1.4">${n.description}</div>` : ''}
+    </div>
+  </div>`;
 }
 
 function renderLogisticsLayer() {
@@ -370,102 +437,111 @@ function renderLogisticsLayer() {
   const nodes = M.logisticsNodes || {};
   if (!Object.keys(nodes).length) return;
 
-  // Resolve which CDCs / LSCs are referenced by visible flows
-  const involvedCDCs = new Set();
-  const lscByCDC = {};            // cdc → Set<lsc>
-  const connections = [];          // {cdc, storeCode, flux, lsc}
+  // --- Parse visible flows to build active nodes + connections ---
+  const activeCDCs = new Set(), activeLSCs = new Set();
+  const connections = [];   // { cdc, lsc, storeCode, flux }
 
   for (const flow of visibleFlows()) {
     if (!flow.transitVia) continue;
     const tv = flow.transitVia;
-    const mentioned = Object.keys(nodes).filter(n => tv.includes(n));
-    let cdc = mentioned.find(n => nodes[n].type === 'CDC');
-    const lsc = mentioned.find(n => nodes[n].type === 'LSC');
-    if (!cdc && lsc && nodes[lsc].parent) cdc = nodes[lsc].parent;
+    const mentioned = Object.keys(nodes).filter(k => tv.includes(k));
+    let cdc = mentioned.find(k => nodes[k].type === 'CDC');
+    const lsc = mentioned.find(k => nodes[k].type === 'LSC');
+    if (!cdc && lsc) cdc = 'CDC SQF';   // infer CDC for LSC-only references
     if (!cdc) continue;
-    involvedCDCs.add(cdc);
-    if (lsc) {
-      if (!lscByCDC[cdc]) lscByCDC[cdc] = new Set();
-      lscByCDC[cdc].add(lsc);
-    }
-    connections.push({ cdc, storeCode: flow.storeCode, flux: flow.flux, lsc });
+    activeCDCs.add(cdc);
+    if (lsc && nodes[lsc]?.lat != null) activeLSCs.add(lsc);
+    connections.push({ cdc, lsc: lsc || null, storeCode: flow.storeCode, flux: flow.flux });
   }
 
-  // Render CDC markers
-  for (const cdc of involvedCDCs) {
-    const c = nodeCoord(nodes, cdc);
-    if (!c) continue;
-    const integratedLSCs = [...(lscByCDC[cdc] || [])];
-    const lscRows = integratedLSCs.map(lsc => `<div class="popup-flow-row">
-        <span style="width:8px;height:8px;border-radius:50%;background:${FLUX_COLORS[nodes[lsc].flux]||'#888'};flex-shrink:0;display:inline-block"></span>
-        <b>${lsc}</b>
-        <span style="color:var(--ink-3);margin-left:auto;font-size:9px">${nodes[lsc].flux||''}</span>
-      </div>`).join('');
-    const popupHtml = `<div class="cp-popup">
-      <div class="popup-hdr" style="background:#1A1D23">
-        <div class="popup-cp">${cdc}</div>
-        <div class="popup-name">${nodes[cdc].label}</div>
-      </div>
-      <div class="popup-body">
-        <table class="popup-tbl">
-          <tr><td>Type</td><td>Centre de Distribution</td></tr>
-          <tr><td>Coordonnées</td><td>${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}</td></tr>
-          <tr><td>Stores servis</td><td>${[...new Set(connections.filter(x=>x.cdc===cdc).map(x=>x.storeCode))].join(', ')}</td></tr>
-        </table>
-        <div class="popup-flows-hdr">LSCs intégrés (${integratedLSCs.length})</div>
-        ${lscRows || '<div style="font-size:10px;color:var(--ink-3)">Aucun LSC actif</div>'}
-        <div style="margin-top:9px;font-size:10px;color:var(--ink-3);line-height:1.4">${nodes[cdc].description||''}</div>
-      </div>
-    </div>`;
-
-    const icon = L.divIcon({
-      className: '',
-      html: `<div class="cdc-pin"><span>${cdc.replace('CDC ','')}</span></div>`,
-      iconSize: [56, 56], iconAnchor: [28, 28],
-    });
+  // --- CDC markers (large) ---
+  for (const cdcKey of activeCDCs) {
+    const n = nodes[cdcKey];
+    if (!n?.lat) continue;
     layers.logistics.push(
-      L.marker([c.lat, c.lng], { icon, zIndexOffset: 800 })
-        .bindPopup(popupHtml, { maxWidth: 290 })
+      L.marker([n.lat, n.lng], { icon: hubIcon(n, false), zIndexOffset: 900 })
+        .bindPopup(nodePopup(cdcKey, nodes, connections), { maxWidth: 290 })
         .addTo(map)
     );
   }
 
-  // Render flow lines (CDC ↔ Store) — dedup on cdc/store/flux
+  // --- LSC markers (small) for active LSCs with own coords ---
+  for (const lscKey of activeLSCs) {
+    const n = nodes[lscKey];
+    if (!n?.lat) continue;
+    // Skip if co-located with active CDC (would overlap)
+    const parentCDC = [...activeCDCs].find(c => nodes[c].lat === n.lat && nodes[c].lng === n.lng);
+    if (parentCDC) continue;
+    layers.logistics.push(
+      L.marker([n.lat, n.lng], { icon: hubIcon(n, true), zIndexOffset: 850 })
+        .bindPopup(nodePopup(lscKey, nodes, connections), { maxWidth: 270 })
+        .addTo(map)
+    );
+  }
+
+  // --- Flow lines (deduped) ---
   const drawn = new Set();
   for (const conn of connections) {
-    const cdcCoord = nodeCoord(nodes, conn.cdc);
-    const store    = M.stores[conn.storeCode];
-    if (!cdcCoord || !store) continue;
-    const key = `${conn.cdc}|${conn.storeCode}|${conn.flux}`;
-    if (drawn.has(key)) continue;
-    drawn.add(key);
+    const cdcNode = nodes[conn.cdc];
+    const lscNode = conn.lsc ? nodes[conn.lsc] : null;
+    const store   = M.stores[conn.storeCode];
+    if (!cdcNode?.lat || !store) continue;
 
-    const isLCDI = conn.flux === 'LCDI';
-    // CCD = CDC ships → Store ; LCDI = Store sends → CDC (then to indirect customers)
-    const from = isLCDI ? [store.lat, store.lng]        : [cdcCoord.lat, cdcCoord.lng];
-    const to   = isLCDI ? [cdcCoord.lat, cdcCoord.lng]  : [store.lat, store.lng];
-    const color = FLUX_COLORS[conn.flux] || '#666';
+    const cdcPt   = [cdcNode.lat, cdcNode.lng];
+    const storePt = [store.lat, store.lng];
+    const lscPt   = (lscNode?.lat != null) ? [lscNode.lat, lscNode.lng] : null;
+    const isLCDI  = conn.flux === 'LCDI';
+    const col     = FLUX_COLORS[conn.flux] || '#888';
 
+    if (!isLCDI) {
+      if (lscPt) {
+        // CDC → LSC (gray dashed)
+        const k1 = `cdc-lsc:${conn.cdc}|${conn.lsc}`;
+        if (!drawn.has(k1)) { drawn.add(k1); addArrowLine(cdcPt, lscPt, '#9CA3AF', true); }
+        // LSC → Store (flux color)
+        const k2 = `lsc-sto:${conn.lsc}|${conn.storeCode}|${conn.flux}`;
+        if (!drawn.has(k2)) { drawn.add(k2); addArrowLine(lscPt, storePt, col, false); }
+      } else {
+        // CDC → Store direct (LSC integrated/co-located)
+        const k = `cdc-sto:${conn.cdc}|${conn.storeCode}|${conn.flux}`;
+        if (!drawn.has(k)) { drawn.add(k); addArrowLine(cdcPt, storePt, col, false); }
+      }
+    } else {
+      // LCDI: Store → CDC (dashed)
+      const k = `lcdi:${conn.storeCode}|${conn.cdc}`;
+      if (!drawn.has(k)) { drawn.add(k); addArrowLine(storePt, cdcPt, col, true); }
+    }
+  }
+
+  // --- Infrastructure nodes (not in active flows) — shown faded ---
+  for (const [key, n] of Object.entries(nodes)) {
+    if (!n.lat) continue;
+    if (activeCDCs.has(key) || activeLSCs.has(key)) continue;
+    // Skip co-located with an active CDC
+    const coloc = [...activeCDCs].some(c => nodes[c]?.lat === n.lat && nodes[c]?.lng === n.lng);
+    if (coloc) continue;
     layers.logistics.push(
-      L.polyline([from, to], {
-        color, weight: 2.8, opacity: .75,
-        dashArray: isLCDI ? '6 5' : null,
-        interactive: false,
-      }).addTo(map)
+      L.marker([n.lat, n.lng], {
+        icon: hubIcon(n, n.type !== 'CDC'),
+        zIndexOffset: n.type === 'CDC' ? 900 : 850,
+        opacity: 0.38,
+      })
+        .bindPopup(`<div class="cp-popup">
+          <div class="popup-hdr" style="background:#6B7280">
+            <div class="popup-cp">${key}</div>
+            <div class="popup-name">${n.label}</div>
+          </div>
+          <div class="popup-body">
+            <table class="popup-tbl">
+              <tr><td>Opérateur</td><td>${n.operator||'—'}</td></tr>
+              <tr><td>Adresse</td><td style="font-size:10px;line-height:1.3">${n.address||'—'}</td></tr>
+              <tr><td>Flux</td><td>${n.flux||'—'}</td></tr>
+            </table>
+            <div style="margin-top:8px;font-size:10px;color:var(--ink-3)">Nœud inactif dans la vue actuelle.</div>
+          </div>
+        </div>`, { maxWidth: 260 })
+        .addTo(map)
     );
-
-    // Arrow head at 80% of line — Unicode triangle rotated
-    const t = 0.80;
-    const aLat = from[0] + (to[0] - from[0]) * t;
-    const aLng = from[1] + (to[1] - from[1]) * t;
-    // Rotation: ▲ points up by default. atan2(dLng, dLat) gives angle from north going east.
-    const angle = Math.atan2(to[1] - from[1], to[0] - from[0]) * 180 / Math.PI;
-    const arrowIcon = L.divIcon({
-      className: '',
-      html: `<div style="font-size:18px;color:${color};line-height:1;transform:rotate(${angle}deg);text-shadow:0 0 3px white,0 0 3px white;font-weight:900">▲</div>`,
-      iconSize: [18, 18], iconAnchor: [9, 9],
-    });
-    layers.logistics.push(L.marker([aLat, aLng], { icon: arrowIcon, interactive: false, zIndexOffset: 700 }).addTo(map));
   }
 }
 

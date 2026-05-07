@@ -48,6 +48,38 @@ const SOURCE_TA_COLORS = {
 };
 function sourceTAColor(name) { return SOURCE_TA_COLORS[name] || '#6B7280'; }
 
+// CP affectation categories
+const CP_CATEGORY_COLORS = {
+  propre: '#059669',   // green — 1 PMA, same store
+  croise: '#7C3AED',   // purple — 1 PMA, different store delivers
+  commun: '#F59E0B',   // amber — appears in 2+ PMA plans
+};
+const CP_CATEGORY_LABELS = {
+  propre: 'Propre',
+  croise: 'Croisé',
+  commun: 'Commun',
+};
+const CP_CATEGORY_DESC = {
+  propre: 'Territoire exclusif, livré par le magasin PMA',
+  croise: 'Territoire d\'une PMA, livré par un autre magasin',
+  commun: 'Présent dans le plan de 2+ PMAs',
+};
+
+// CP affectation category — computed from the global flowsByCP index (not filtered)
+// propre: single PMA owns it, its own store delivers | croise: single PMA, foreign store delivers | commun: 2+ PMAs
+function cpCategory(cp) {
+  const flows = flowsByCP[cp] || [];
+  if (!flows.length) return 'propre';
+  const pmasPlan = new Set(flows.map(x => x.flow.pma));
+  if (pmasPlan.size > 1) return 'commun';
+  const planPMA = [...pmasPlan][0];
+  for (const f of flows) {
+    const storePMA = M.stores[f.flow.storeCode]?.pma;
+    if (storePMA && storePMA !== planPMA) return 'croise';
+  }
+  return 'propre';
+}
+
 // Sort key for source TA labels (PRIO first, then numeric)
 function sourceTASortKey(name) {
   if (name === 'PRIO') return -1;
@@ -59,17 +91,18 @@ function sourceTASortKey(name) {
 // State
 // ============================================================
 let state = {
-  selectedPMAs:   new Set(['Lyon']),
-  enabledFlowIds: new Set(M.flows.map(f => f._id)),  // all on by default
-  zoneFilter:     'all',
-  taSourceFilter: 'all',
-  unit:           'ta-source',
-  mode:           'polygons',
-  basemap:        'light',
-  speedKmh:       65,
-  leftOpen:       true,
-  rightOpen:      true,
-  drawerOpen:     false,
+  selectedPMAs:      new Set(['Lyon']),
+  enabledFlowIds:    new Set(M.flows.map(f => f._id)),  // all on by default
+  zoneFilter:        'all',
+  taSourceFilter:    'all',
+  cpCategoryFilter:  'all',
+  unit:              'ta-source',
+  mode:              'polygons',
+  basemap:           'light',
+  speedKmh:          65,
+  leftOpen:          true,
+  rightOpen:         true,
+  drawerOpen:        false,
 };
 
 // ============================================================
@@ -237,9 +270,11 @@ function buildRecords() {
         if (state.zoneFilter !== 'all' && tz !== state.zoneFilter) continue;
         const sourceTA = normalizeTA(zoneName);
         if (state.taSourceFilter !== 'all' && sourceTA !== state.taSourceFilter) continue;
+        const category = cpCategory(k);
+        if (state.cpCategoryFilter !== 'all' && category !== state.cpCategoryFilter) continue;
         out.push({ cp: k, name: d.name, lat: d.lat, lng: d.lng,
           population: d.population || 0, polygons: d.polygons,
-          flow, zoneName, zoneLabel: zone.label, sourceTA, store, dist, time, timeZone: tz });
+          flow, zoneName, zoneLabel: zone.label, sourceTA, category, store, dist, time, timeZone: tz });
       }
     }
   }
@@ -286,6 +321,7 @@ function colorFor(r) {
   const u = state.unit;
   if (u === 'ta-source') return sourceTAColor(r.sourceTA);
   if (u === 'cp' || u === 'zone') return ZONE_COLORS[r.timeZone] || '#999';
+  if (u === 'category')   return CP_CATEGORY_COLORS[r.category] || '#6B7280';
   if (u === 'population') return scale(r.population, popMin, popMax, ['#C7E9F8','#0EA5E9','#0C4A6E']);
   if (u === 'distance')   return scale(r.dist, distMin, distMax, ['#059669','#FFDB00','#DC2626']);
   if (u === 'time')       return scale(r.time, timeMin, timeMax, ['#059669','#FFDB00','#DC2626']);
@@ -371,20 +407,24 @@ function renderMap(records) {
   } else if (state.mode === 'polygons') {
     for (const r of unique) {
       const color = colorFor(r);
-      const allFlows = flowsByCP[r.cp] || [];
-      const pmasForCP = new Set(allFlows.map(x => x.flow.pma));
-      const isOverlap = pmasForCP.size > 1;
+      const cat = r.category;
+      const borderColor = cat === 'commun' ? '#F59E0B'
+        : cat === 'croise' ? '#7C3AED'
+        : 'rgba(255,255,255,.6)';
+      const borderWeight = cat === 'propre' ? 0.7 : 2.2;
+      const borderDash   = cat === 'croise' ? '6 4' : null;
       for (const poly of r.polygons) {
         const layer = L.geoJSON(poly, {
           style: {
-            color: isOverlap ? '#FFDB00' : 'rgba(255,255,255,.6)',
-            weight: isOverlap ? 2 : 0.7,
+            color: borderColor,
+            weight: borderWeight,
+            dashArray: borderDash,
             fillColor: color, fillOpacity: .68,
           },
         })
-          .bindPopup(buildPopup(r), { maxWidth: 280 })
-          .on('mouseover', e => e.target.setStyle({ weight: 2.5, fillOpacity: .88 }))
-          .on('mouseout', e => e.target.setStyle({ weight: isOverlap?2:.7, fillOpacity: .68 }))
+          .bindPopup(buildPopup(r), { maxWidth: 300 })
+          .on('mouseover', e => e.target.setStyle({ weight: borderWeight + 1.5, fillOpacity: .88 }))
+          .on('mouseout', e => e.target.setStyle({ weight: borderWeight, fillOpacity: .68, color: borderColor, dashArray: borderDash }))
           .addTo(map);
         layers.polygons.push(layer);
         const b = layer.getBounds();
@@ -443,6 +483,9 @@ function buildPopup(r) {
         <div class="popup-ta" style="background:${tzColor};margin:0">
           Z${r.timeZone || '?'} <span style="opacity:.8;font-weight:600">· temps</span>
         </div>
+        <div class="popup-ta" style="background:${CP_CATEGORY_COLORS[r.category]};margin:0">
+          ${CP_CATEGORY_LABELS[r.category]} <span style="opacity:.8;font-weight:600">· affectation</span>
+        </div>
       </div>
       <table class="popup-tbl">
         <tr><td>Zone source</td><td>${r.zoneName} <span style="color:var(--ink-3);font-size:10px">(${r.sourceTA})</span></td></tr>
@@ -484,6 +527,24 @@ function renderSourceTAFilter() {
       state.taSourceFilter = b.dataset.tas;
       renderAll();
     };
+  });
+}
+
+function renderCategoryFilter() {
+  const box = document.getElementById('cat-filter-tabs');
+  if (!box) return;
+  const cats = ['all', 'propre', 'croise', 'commun'];
+  const catLabels = { all: 'Tous', propre: '● Propre', croise: '◎ Croisé', commun: '◉ Commun' };
+  box.innerHTML = cats.map(c => {
+    const active = state.cpCategoryFilter === c;
+    const col = c !== 'all' ? CP_CATEGORY_COLORS[c] : null;
+    return `<button class="chip ${active ? 'active' : ''}" data-cat="${c}"
+      style="${active ? '' : (col ? 'border-color:'+col+'66;color:'+col : '')}">
+      ${catLabels[c]}
+    </button>`;
+  }).join('');
+  box.querySelectorAll('.chip').forEach(b => {
+    b.onclick = () => { state.cpCategoryFilter = b.dataset.cat; renderAll(); };
   });
 }
 
@@ -582,7 +643,8 @@ function renderHeaderSummary(records) {
     return;
   }
   const totalPop = unique.reduce((a,r) => a + r.population, 0);
-  const overlapN = unique.filter(r => new Set((flowsByCP[r.cp]||[]).map(x=>x.flow.pma)).size > 1).length;
+  const catCount = { propre: 0, croise: 0, commun: 0 };
+  unique.forEach(r => { catCount[r.category] = (catCount[r.category] || 0) + 1; });
   const badges = [...state.selectedPMAs].map(pma =>
     `<span class="hdr-pma-badge" style="border-color:${PMA_COLORS[pma]};color:${PMA_COLORS[pma]}">
       <span style="width:6px;height:6px;border-radius:50%;background:${PMA_COLORS[pma]};display:inline-block"></span>
@@ -594,7 +656,11 @@ function renderHeaderSummary(records) {
     <span style="color:var(--ink-3)">·</span>
     <span class="hdr-stat"><b>${fmt(totalPop)}</b> hab.</span>
     <span style="color:var(--ink-3)">·</span>
-    <span class="hdr-stat"><b>${overlapN}</b> doublons</span>`;
+    <span class="hdr-stat" title="CP exclusifs au PMA, livrés par son propre magasin" style="color:${CP_CATEGORY_COLORS.propre}"><b>${catCount.propre}</b> propres</span>
+    <span style="color:var(--ink-3)">·</span>
+    <span class="hdr-stat" title="CP d'une PMA livrés par un autre magasin" style="color:${CP_CATEGORY_COLORS.croise}"><b>${catCount.croise}</b> croisés</span>
+    <span style="color:var(--ink-3)">·</span>
+    <span class="hdr-stat" title="CP présents dans 2+ plans PMA" style="color:${CP_CATEGORY_COLORS.commun}"><b>${catCount.commun}</b> communs</span>`;
 }
 
 // ============================================================
@@ -642,7 +708,17 @@ function renderLegend() {
     items.innerHTML = visible.map(t =>
       `<div class="legend-item"><div class="legend-sw" style="background:${sourceTAColor(t)}"></div><span>${t}</span></div>`
     ).join('') + `<div style="height:1px;background:var(--line);margin:6px 0"></div>
-      <div class="legend-item"><div class="legend-sw" style="background:#FFDB00;border:1px solid #ccc"></div><span style="color:var(--ink-2)">Doublon inter-PMAs</span></div>`;
+      <div class="legend-item"><div style="width:16px;height:10px;border-radius:3px;background:${CP_CATEGORY_COLORS.croise};opacity:.5;border:2px dashed ${CP_CATEGORY_COLORS.croise}"></div><span style="color:var(--ink-2)">Croisé (bord violet)</span></div>
+      <div class="legend-item"><div style="width:16px;height:10px;border-radius:3px;background:${CP_CATEGORY_COLORS.commun};opacity:.5;border:2px solid ${CP_CATEGORY_COLORS.commun}"></div><span style="color:var(--ink-2)">Commun (bord ambre)</span></div>`;
+  } else if (u === 'category') {
+    title.textContent = 'Affectation CP';
+    items.innerHTML = `
+      <div class="legend-item"><div class="legend-sw" style="background:${CP_CATEGORY_COLORS.propre}"></div><span>Propre — exclusif</span></div>
+      <div class="legend-item" style="align-items:flex-start">
+        <div style="width:16px;height:10px;border-radius:3px;background:${CP_CATEGORY_COLORS.croise};flex-shrink:0;margin-top:2px;border:2px dashed ${CP_CATEGORY_COLORS.croise}"></div>
+        <span style="line-height:1.3">Croisé — autre magasin livre</span>
+      </div>
+      <div class="legend-item"><div class="legend-sw" style="background:${CP_CATEGORY_COLORS.commun}"></div><span>Commun — multi-PMA</span></div>`;
   } else if (u === 'cp' || u === 'zone') {
     title.textContent = 'Zone temps (calculée)';
     items.innerHTML = `
@@ -678,15 +754,16 @@ function renderRightPanel(records) {
   const distAvg  = unique.length ? unique.reduce((a,r)=>a+r.dist,0)/unique.length : 0;
   const distMax2 = unique.reduce((a,r)=>Math.max(a,r.dist),0);
   const timeAvg  = distAvg / state.speedKmh;
-  const overlapN = unique.filter(r => new Set((flowsByCP[r.cp]||[]).map(x=>x.flow.pma)).size > 1).length;
+  const catCount2 = { propre: 0, croise: 0, commun: 0 };
+  unique.forEach(r => { catCount2[r.category] = (catCount2[r.category] || 0) + 1; });
 
   document.getElementById('stat-grid').innerHTML = `
     <div class="stat-card"><div class="stat-num">${unique.length}</div><div class="stat-label">Codes postaux</div></div>
     <div class="stat-card"><div class="stat-num">${fmt(totalPop)}</div><div class="stat-label">Population</div></div>
     <div class="stat-card"><div class="stat-num">${Math.round(distAvg)}<small>km</small></div><div class="stat-label">Dist. moyenne</div></div>
     <div class="stat-card"><div class="stat-num">${fmtTime(timeAvg)}</div><div class="stat-label">Temps moyen</div></div>
-    <div class="stat-card"><div class="stat-num">${Math.round(distMax2)}<small>km</small></div><div class="stat-label">Dist. maximale</div></div>
-    <div class="stat-card"><div class="stat-num" style="color:${overlapN>0?'#F59E0B':'inherit'}">${overlapN}</div><div class="stat-label">Doublons inter-PMA</div></div>`;
+    <div class="stat-card"><div class="stat-num" style="color:${CP_CATEGORY_COLORS.croise}">${catCount2.croise}</div><div class="stat-label">CP croisés</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:${CP_CATEGORY_COLORS.commun}">${catCount2.commun}</div><div class="stat-label">CP communs</div></div>`;
 
   // Source-TA bars (from the actual transport plan)
   const tas = uniqueSourceTAs(unique);
@@ -750,17 +827,56 @@ function renderInsights(records, unique) {
   const ins = document.getElementById('insights');
   ins.innerHTML = '';
 
-  // 1. Overlapping CPs
-  const overlap = unique.filter(r => new Set((flowsByCP[r.cp]||[]).map(x=>x.flow.pma)).size > 1);
-  if (overlap.length) {
-    const sample = overlap.slice(0,5).map(r => {
-      const pmas = [...new Set((flowsByCP[r.cp]||[]).map(x=>x.flow.pma))];
-      return `<code style="background:white;padding:1px 5px;border-radius:3px;border:1px solid var(--line);font-family:monospace;font-size:10px">${r.cp}</code> ${pmas.join(' + ')}`;
+  // 1. Inter-PMA cooperation matrix (from ALL flowsByCP, not filtered)
+  const coopMap = {};
+  for (const [cp, flows] of Object.entries(flowsByCP)) {
+    const pmasPlan = new Set(flows.map(f => f.flow.pma));
+    if (pmasPlan.size === 1) {
+      const planPMA = [...pmasPlan][0];
+      for (const f of flows) {
+        const storePMA = M.stores[f.flow.storeCode]?.pma;
+        if (storePMA && storePMA !== planPMA) {
+          const key = `${storePMA}→${planPMA}`;
+          if (!coopMap[key]) coopMap[key] = { from: storePMA, to: planPMA, cps: new Set(), fluxTypes: new Set() };
+          coopMap[key].cps.add(cp);
+          coopMap[key].fluxTypes.add(f.flow.flux);
+        }
+      }
+    }
+  }
+  const communN = unique.filter(r => r.category === 'commun').length;
+  const croiseN = unique.filter(r => r.category === 'croise').length;
+  const coopEntries = Object.values(coopMap);
+  if (coopEntries.length) {
+    const rows = coopEntries.map(e =>
+      `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;background:var(--bg);margin-bottom:4px;font-size:10px;font-weight:600">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${PMA_COLORS[e.from]||'#888'};flex-shrink:0"></span>
+        <b>${e.from}</b>
+        <span style="color:var(--ink-3)">aide</span>
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${PMA_COLORS[e.to]||'#888'};flex-shrink:0"></span>
+        <b>${e.to}</b>
+        <span style="color:var(--ink-3);margin-left:auto">${e.cps.size} CP · ${[...e.fluxTypes].join(', ')}</span>
+      </div>`
+    ).join('');
+    ins.innerHTML += `<div class="insight-card" style="border-color:${CP_CATEGORY_COLORS.croise}22">
+      <div class="insight-title"><div class="insight-icon" style="background:#EDE9FE">🤝</div>Coopération inter-PMA</div>
+      ${rows}
+      <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">
+        Vue filtrée : <b style="color:${CP_CATEGORY_COLORS.croise}">${croiseN} CP croisés</b> · <b style="color:${CP_CATEGORY_COLORS.commun}">${communN} CP communs</b>.
+      </div>
+    </div>`;
+  }
+
+  // 1b. Common CPs details
+  if (communN > 0) {
+    const communSample = unique.filter(r => r.category === 'commun').slice(0, 5).map(r => {
+      const pmas = [...new Set((flowsByCP[r.cp]||[]).map(x => x.flow.pma))];
+      return `<code style="background:white;padding:1px 5px;border-radius:3px;border:1px solid var(--line);font-family:monospace;font-size:10px">${r.cp}</code> ${pmas.map(p=>`<span style="color:${PMA_COLORS[p]};font-weight:700">${p}</span>`).join(' + ')}`;
     }).join('<br>');
-    ins.innerHTML += `<div class="insight-card">
-      <div class="insight-title"><div class="insight-icon" style="background:#FEF9C3">⚠️</div>${overlap.length} CP servis par plusieurs PMAs</div>
-      ${sample}${overlap.length>5?`<br><span style="color:var(--ink-3)">…et ${overlap.length-5} autres</span>`:''}
-      <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Rationaliser l'affectation supprime les tournées redondantes.</div>
+    ins.innerHTML += `<div class="insight-card" style="border-color:${CP_CATEGORY_COLORS.commun}44">
+      <div class="insight-title"><div class="insight-icon" style="background:#FEF3C7">⚠️</div>${communN} CP présents dans plusieurs plans PMA</div>
+      ${communSample}${communN > 5 ? `<br><span style="color:var(--ink-3)">…et ${communN-5} autres</span>` : ''}
+      <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Affectation à clarifier pour éviter les tournées redondantes.</div>
     </div>`;
   }
 
@@ -1032,6 +1148,7 @@ function renderAll() {
   renderPMAPicker();
   renderFlowList();
   renderSourceTAFilter();
+  renderCategoryFilter();
   const records = buildRecords();
   renderMap(records);
   renderHeaderSummary(records);

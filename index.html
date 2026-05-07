@@ -458,6 +458,13 @@ html,body{height:100%;overflow:hidden;
 .panel::-webkit-scrollbar-track,.dept-tbl-wrap::-webkit-scrollbar-track,.cp-results::-webkit-scrollbar-track{background:transparent;}
 .panel::-webkit-scrollbar-thumb,.dept-tbl-wrap::-webkit-scrollbar-thumb,.cp-results::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px;}
 
+/* ── Category legend in left panel ── */
+.cat-legend-row{display:flex;flex-direction:column;gap:5px;}
+.cat-legend-item{display:flex;align-items:center;gap:8px;font-size:11px;}
+.cat-swatch{width:18px;height:11px;border-radius:3px;flex-shrink:0;}
+.cat-text{color:var(--ink-2);line-height:1.3;}
+.cat-text b{color:var(--ink);}
+
 /* ── Divider ── */
 .divider{height:1px;background:var(--line);margin:0 -16px;}
 
@@ -558,10 +565,30 @@ html,body{height:100%;overflow:hidden;
   </div>
 
   <div class="panel-section">
+    <div class="sec-label">Affectation CP inter-PMA</div>
+    <div class="cat-legend-row">
+      <div class="cat-legend-item">
+        <div class="cat-swatch" style="background:#059669"></div>
+        <div class="cat-text"><b>Propre</b> — territoire exclusif</div>
+      </div>
+      <div class="cat-legend-item">
+        <div class="cat-swatch" style="background:#7C3AED;border:2px dashed #7C3AED;opacity:.8"></div>
+        <div class="cat-text"><b>Croisé</b> — livré par un autre magasin</div>
+      </div>
+      <div class="cat-legend-item">
+        <div class="cat-swatch" style="background:#F59E0B"></div>
+        <div class="cat-text"><b>Commun</b> — partagé entre 2+ PMAs</div>
+      </div>
+    </div>
+    <div class="chip-row" id="cat-filter-tabs" style="margin-top:10px"></div>
+  </div>
+
+  <div class="panel-section">
     <div class="sec-label">Coloration de la carte</div>
     <div class="chip-row" id="unit-tabs">
       <button class="chip" data-unit="cp">Zone temps</button>
       <button class="chip active" data-unit="ta-source">TA source</button>
+      <button class="chip" data-unit="category">Affectation</button>
       <button class="chip" data-unit="population">Population</button>
       <button class="chip" data-unit="distance">Dist. km</button>
       <button class="chip" data-unit="time">Temps</button>

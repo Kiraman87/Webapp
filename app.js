@@ -460,15 +460,31 @@ function buildPopup(r) {
   const allFlows = flowsByCP[r.cp] || [];
   const color = PMA_COLORS[r.flow.pma] || '#0058A3';
   const tzColor = ZONE_COLORS[r.timeZone] || '#999';
-  const flowRows = allFlows.map(f =>
-    `<div class="popup-flow-row">
-      <span style="width:8px;height:8px;border-radius:50%;background:${FLUX_COLORS[f.flow.flux]};flex-shrink:0;display:inline-block"></span>
-      <b>${f.flow.flux}</b>
-      <span style="color:var(--ink-3)">→</span>
-      ${f.flow.pma}
-      <span style="color:var(--ink-3);margin-left:auto;font-size:9px">${f.zoneName} · Store ${f.flow.storeCode}</span>
-    </div>`
-  ).join('');
+  const flowRows = allFlows.map(f => {
+    const fluxColor = FLUX_COLORS[f.flow.flux];
+    const storePMA  = M.stores[f.flow.storeCode]?.pma;
+    const isCross   = storePMA && storePMA !== f.flow.pma;
+    const via       = f.flow.transitVia || null;
+    const storeObj  = M.stores[f.flow.storeCode];
+    const storeName = storeObj ? storeObj.name.replace('IKEA ','') : `Store ${f.flow.storeCode}`;
+    return `<div class="popup-flow-row" style="flex-direction:column;align-items:flex-start;gap:4px">
+      <div style="display:flex;align-items:center;gap:6px;width:100%">
+        <span style="width:9px;height:9px;border-radius:50%;background:${fluxColor};flex-shrink:0"></span>
+        <span class="flux-badge" style="background:${fluxColor};padding:1px 7px">${f.flow.flux}</span>
+        <b style="font-size:11px">${f.flow.pma}</b>
+        ${isCross ? `<span style="font-size:9px;background:#EDE9FE;color:#7C3AED;padding:1px 6px;border-radius:4px;font-weight:700;margin-left:auto">inter-PMA</span>` : ''}
+      </div>
+      ${via ? `<div style="display:flex;align-items:center;gap:5px;padding-left:15px">
+        <span style="font-size:10px;color:var(--ink-3)">via</span>
+        <code style="font-size:10px;font-weight:700;color:var(--ink);background:white;padding:1px 6px;border-radius:4px;border:1px solid var(--line)">${via}</code>
+      </div>` : ''}
+      <div style="display:flex;gap:8px;padding-left:15px;font-size:10px;color:var(--ink-3)">
+        <span>🏪 ${storeName}</span>
+        <span>·</span>
+        <span>${f.zoneName}</span>
+      </div>
+    </div>`;
+  }).join('');
 
   return `<div class="cp-popup">
     <div class="popup-hdr" style="background:${color}">

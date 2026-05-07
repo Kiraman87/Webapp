@@ -26,6 +26,35 @@ const FLUX_DESC = {
   LCDI: 'Local Delivery Indirect',
 };
 
+// Normalize source TA names: "TA00"/"TA 00"/"TA00 " → "TA0"; "TA Prio"/"TA PRIO" → "PRIO"
+function normalizeTA(zoneName) {
+  const s = String(zoneName).toUpperCase().trim();
+  if (s.includes('PRIO')) return 'PRIO';
+  const m = s.match(/(\d+)/);
+  if (!m) return s.replace(/\s+/g,'');
+  return 'TA' + parseInt(m[1], 10);
+}
+
+const SOURCE_TA_COLORS = {
+  'TA0':  '#0E7490',
+  'TA1':  '#16A34A',
+  'TA2':  '#3B82F6',
+  'TA3':  '#F59E0B',
+  'TA4':  '#EF4444',
+  'TA5':  '#A855F7',
+  'TA6':  '#EC4899',
+  'TA7':  '#6366F1',
+  'PRIO': '#FFDB00',
+};
+function sourceTAColor(name) { return SOURCE_TA_COLORS[name] || '#6B7280'; }
+
+// Sort key for source TA labels (PRIO first, then numeric)
+function sourceTASortKey(name) {
+  if (name === 'PRIO') return -1;
+  const m = name.match(/(\d+)/);
+  return m ? parseInt(m[1],10) : 99;
+}
+
 // ============================================================
 // State
 // ============================================================
@@ -33,7 +62,8 @@ let state = {
   selectedPMAs:   new Set(['Lyon']),
   enabledFlowIds: new Set(M.flows.map(f => f._id)),  // all on by default
   zoneFilter:     'all',
-  unit:           'cp',
+  taSourceFilter: 'all',
+  unit:           'ta-source',
   mode:           'polygons',
   basemap:        'light',
   speedKmh:       65,
@@ -205,9 +235,11 @@ function buildRecords() {
         const time = dist / state.speedKmh;
         const tz = timeZone(time);
         if (state.zoneFilter !== 'all' && tz !== state.zoneFilter) continue;
+        const sourceTA = normalizeTA(zoneName);
+        if (state.taSourceFilter !== 'all' && sourceTA !== state.taSourceFilter) continue;
         out.push({ cp: k, name: d.name, lat: d.lat, lng: d.lng,
           population: d.population || 0, polygons: d.polygons,
-          flow, zoneName, zoneLabel: zone.label, store, dist, time, timeZone: tz });
+          flow, zoneName, zoneLabel: zone.label, sourceTA, store, dist, time, timeZone: tz });
       }
     }
   }
@@ -218,6 +250,21 @@ function dedupe(records) {
   const seen = new Set(), out = [];
   for (const r of records) { if (!seen.has(r.cp)) { seen.add(r.cp); out.push(r); } }
   return out;
+}
+
+function uniqueSourceTAs(records) {
+  return [...new Set(records.map(r => r.sourceTA))].sort((a,b) => sourceTASortKey(a) - sourceTASortKey(b));
+}
+
+// Source TAs available given current PMA + flux selection (ignoring the source-TA filter itself)
+function availableSourceTAs() {
+  const tas = new Set();
+  for (const flow of M.flows) {
+    if (!state.selectedPMAs.has(flow.pma)) continue;
+    if (!state.enabledFlowIds.has(flow._id)) continue;
+    Object.keys(flow.zones).forEach(z => tas.add(normalizeTA(z)));
+  }
+  return [...tas].sort((a,b) => sourceTASortKey(a) - sourceTASortKey(b));
 }
 
 // ============================================================
@@ -237,6 +284,7 @@ function computeScales(records) {
 
 function colorFor(r) {
   const u = state.unit;
+  if (u === 'ta-source') return sourceTAColor(r.sourceTA);
   if (u === 'cp' || u === 'zone') return ZONE_COLORS[r.timeZone] || '#999';
   if (u === 'population') return scale(r.population, popMin, popMax, ['#C7E9F8','#0EA5E9','#0C4A6E']);
   if (u === 'distance')   return scale(r.dist, distMin, distMax, ['#059669','#FFDB00','#DC2626']);
@@ -388,10 +436,16 @@ function buildPopup(r) {
       <div class="popup-name">${r.name || ''}</div>
     </div>
     <div class="popup-body">
-      <div class="popup-ta" style="background:${tzColor}">
-        Zone TA${r.timeZone || '?'} · ${r.zoneName}
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">
+        <div class="popup-ta" style="background:${sourceTAColor(r.sourceTA)};margin:0">
+          ${r.sourceTA} <span style="opacity:.8;font-weight:600">· source plan</span>
+        </div>
+        <div class="popup-ta" style="background:${tzColor};margin:0">
+          Z${r.timeZone || '?'} <span style="opacity:.8;font-weight:600">· temps</span>
+        </div>
       </div>
       <table class="popup-tbl">
+        <tr><td>Zone source</td><td>${r.zoneName} <span style="color:var(--ink-3);font-size:10px">(${r.sourceTA})</span></td></tr>
         <tr><td>Magasin</td><td>${r.store.name.replace('IKEA ','')}</td></tr>
         <tr><td>Distance</td><td>${Math.round(r.dist)} km</td></tr>
         <tr><td>Temps trajet</td><td>${fmtTime(r.time)}</td></tr>
@@ -406,6 +460,33 @@ function buildPopup(r) {
 // ============================================================
 // UI — Left panel
 // ============================================================
+function renderSourceTAFilter() {
+  const box = document.getElementById('ta-source-tabs');
+  const tas = availableSourceTAs();
+
+  // Reset filter if current selection no longer applies
+  if (state.taSourceFilter !== 'all' && !tas.includes(state.taSourceFilter)) {
+    state.taSourceFilter = 'all';
+  }
+
+  const allActive = state.taSourceFilter === 'all';
+  let html = `<button class="chip ${allActive?'active':''}" data-tas="all">Toutes</button>`;
+  for (const t of tas) {
+    const active = state.taSourceFilter === t;
+    html += `<button class="chip ${active?'active':''}" data-tas="${t}" style="${active?'':'border-color:'+sourceTAColor(t)+'66'}">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${sourceTAColor(t)};margin-right:5px;vertical-align:middle"></span>${t}
+    </button>`;
+  }
+  box.innerHTML = html;
+
+  box.querySelectorAll('.chip').forEach(b => {
+    b.onclick = () => {
+      state.taSourceFilter = b.dataset.tas;
+      renderAll();
+    };
+  });
+}
+
 function renderPMAPicker() {
   const box = document.getElementById('pma-picker');
   box.innerHTML = '';
@@ -555,12 +636,19 @@ function renderLegend() {
   const lOff = state.leftOpen ? 'var(--pw)' : '0px';
   legend.style.left = `calc(${lOff} + 12px)`;
 
-  if (u === 'cp' || u === 'zone') {
-    title.textContent = 'Zone temps (TA)';
+  if (u === 'ta-source') {
+    title.textContent = 'TA source (plan)';
+    const visible = uniqueSourceTAs(buildRecords());
+    items.innerHTML = visible.map(t =>
+      `<div class="legend-item"><div class="legend-sw" style="background:${sourceTAColor(t)}"></div><span>${t}</span></div>`
+    ).join('') + `<div style="height:1px;background:var(--line);margin:6px 0"></div>
+      <div class="legend-item"><div class="legend-sw" style="background:#FFDB00;border:1px solid #ccc"></div><span style="color:var(--ink-2)">Doublon inter-PMAs</span></div>`;
+  } else if (u === 'cp' || u === 'zone') {
+    title.textContent = 'Zone temps (calculée)';
     items.innerHTML = `
-      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['1']}"></div><span>TA1 · ≤ 45 min</span></div>
-      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['2']}"></div><span>TA2 · 45–60 min</span></div>
-      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['3']}"></div><span>TA3 · 60–110 min</span></div>
+      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['1']}"></div><span>Z1 · ≤ 45 min</span></div>
+      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['2']}"></div><span>Z2 · 45–60 min</span></div>
+      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['3']}"></div><span>Z3 · 60–110 min</span></div>
       <div style="height:1px;background:var(--line);margin:6px 0"></div>
       <div class="legend-item"><div class="legend-sw" style="background:#FFDB00;border:1px solid #ccc"></div><span style="color:var(--ink-2)">Doublon inter-PMAs</span></div>`;
   } else if (u === 'population') {
@@ -600,19 +688,38 @@ function renderRightPanel(records) {
     <div class="stat-card"><div class="stat-num">${Math.round(distMax2)}<small>km</small></div><div class="stat-label">Dist. maximale</div></div>
     <div class="stat-card"><div class="stat-num" style="color:${overlapN>0?'#F59E0B':'inherit'}">${overlapN}</div><div class="stat-label">Doublons inter-PMA</div></div>`;
 
-  // TA bars
-  const taCount = {'1':0,'2':0,'3':0,'4':0};
-  unique.forEach(r => { if (r.timeZone) taCount[r.timeZone]++; });
+  // Source-TA bars (from the actual transport plan)
+  const tas = uniqueSourceTAs(unique);
+  const taSrcCount = {};
+  unique.forEach(r => { taSrcCount[r.sourceTA] = (taSrcCount[r.sourceTA]||0) + 1; });
   const tot = unique.length || 1;
-  document.getElementById('bar-chart').innerHTML = ['1','2','3','4'].map(z => {
-    if (!taCount[z]) return '';
-    const pct = (taCount[z]/tot)*100;
+  document.getElementById('bar-chart').innerHTML = tas.map(t => {
+    const pct = (taSrcCount[t]/tot)*100;
     return `<div class="bar-row">
-      <div class="bar-lbl">TA${z}</div>
+      <div class="bar-lbl">${t}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${sourceTAColor(t)}"></div></div>
+      <div class="bar-val">${taSrcCount[t]} <span style="color:var(--ink-3);font-weight:400">${pct.toFixed(0)}%</span></div>
+    </div>`;
+  }).join('') || `<div style="font-size:10px;color:var(--ink-3)">Aucune donnée</div>`;
+
+  // Time-zone bars (computed from haversine + speed) — secondary
+  const tzCount = {'1':0,'2':0,'3':0,'4':0};
+  unique.forEach(r => { if (r.timeZone) tzCount[r.timeZone]++; });
+  const tzHTML = ['1','2','3','4'].map(z => {
+    if (!tzCount[z]) return '';
+    const pct = (tzCount[z]/tot)*100;
+    const lbl = z==='1'?'Z1 ≤45min':z==='2'?'Z2 45–60':z==='3'?'Z3 60–110':'Z4 >110';
+    return `<div class="bar-row">
+      <div class="bar-lbl">${lbl}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${ZONE_COLORS[z]||'#888'}"></div></div>
-      <div class="bar-val">${taCount[z]} <span style="color:var(--ink-3);font-weight:400">${pct.toFixed(0)}%</span></div>
+      <div class="bar-val">${tzCount[z]} <span style="color:var(--ink-3);font-weight:400">${pct.toFixed(0)}%</span></div>
     </div>`;
   }).join('');
+  document.getElementById('bar-chart').insertAdjacentHTML('beforeend',
+    `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)">
+       <div style="font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin-bottom:7px">Zone temps (calculée)</div>
+       ${tzHTML || '<div style="font-size:10px;color:var(--ink-3)">—</div>'}
+     </div>`);
 
   // Flux bars — per individual flow
   const fluxMap = {};
@@ -757,7 +864,7 @@ function renderDeptTables(records) {
       <div class="dept-tbl-wrap">
         <table>
           <thead><tr>
-            <th>CP</th><th>Commune</th><th>TA</th>
+            <th>CP</th><th>Commune</th><th>TA src</th><th>Z. tps</th>
             <th>PMA</th><th>Flux</th>
             <th style="text-align:right">Pop.</th>
             <th style="text-align:right">km</th>
@@ -766,8 +873,9 @@ function renderDeptTables(records) {
           <tbody>
             ${recs.map(r => `<tr data-lat="${r.lat}" data-lng="${r.lng}">
               <td><b>${r.cp}</b></td>
-              <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name||''}">${r.name||'—'}</td>
-              <td><span class="ta-pill" style="background:${ZONE_COLORS[r.timeZone]||'#888'}">TA${r.timeZone||'?'}</span></td>
+              <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name||''}">${r.name||'—'}</td>
+              <td><span class="ta-pill" style="background:${sourceTAColor(r.sourceTA)}" title="${r.zoneName}">${r.sourceTA}</span></td>
+              <td><span class="ta-pill" style="background:${ZONE_COLORS[r.timeZone]||'#888'}">Z${r.timeZone||'?'}</span></td>
               <td><span class="pma-tag" style="border-color:${PMA_COLORS[r.flow.pma]};color:${PMA_COLORS[r.flow.pma]}">${r.flow.pma}</span></td>
               <td><span class="flux-tag" style="background:${FLUX_COLORS[r.flow.flux]}">${r.flow.flux}</span></td>
               <td style="text-align:right;font-variant-numeric:tabular-nums">${fmt(r.population)}</td>
@@ -828,10 +936,10 @@ function setupSearch() {
 // ============================================================
 function exportCSV() {
   const records = buildRecords();
-  const rows = [['CP','Commune','PMA','Flux','Store','Zone_TA','TA_temps','Population','Distance_km','Temps_h','Lat','Lng']];
+  const rows = [['CP','Commune','PMA','Flux','Store','TA_source_brut','TA_source_norm','Zone_temps','Population','Distance_km','Temps_h','Lat','Lng']];
   for (const r of records) rows.push([
     r.cp, (r.name||'').replace(/[",]/g,' '),
-    r.flow.pma, r.flow.flux, r.store.code, r.zoneName, r.timeZone||'',
+    r.flow.pma, r.flow.flux, r.store.code, r.zoneName, r.sourceTA, r.timeZone||'',
     r.population, Math.round(r.dist), r.time.toFixed(2),
     r.lat.toFixed(5), r.lng.toFixed(5),
   ]);
@@ -923,6 +1031,7 @@ function wireUI() {
 function renderAll() {
   renderPMAPicker();
   renderFlowList();
+  renderSourceTAFilter();
   const records = buildRecords();
   renderMap(records);
   renderHeaderSummary(records);

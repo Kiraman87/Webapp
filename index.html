@@ -543,19 +543,25 @@ html,body{height:100%;overflow:hidden;
   </div>
 
   <div class="panel-section">
-    <div class="sec-label">Zone TA (temps)</div>
+    <div class="sec-label">Filtre Zone temps (calculée)</div>
     <div class="chip-row" id="zone-tabs">
       <button class="chip active" data-zone="all">Toutes</button>
-      <button class="chip" data-zone="1">TA1 ≤45min</button>
-      <button class="chip" data-zone="2">TA2 45–60</button>
-      <button class="chip" data-zone="3">TA3 60–110</button>
+      <button class="chip" data-zone="1">Z1 ≤45min</button>
+      <button class="chip" data-zone="2">Z2 45–60</button>
+      <button class="chip" data-zone="3">Z3 60–110</button>
     </div>
   </div>
 
   <div class="panel-section">
-    <div class="sec-label">Unité affichée sur la carte</div>
+    <div class="sec-label">Filtre TA source (depuis le plan)</div>
+    <div class="chip-row" id="ta-source-tabs"></div>
+  </div>
+
+  <div class="panel-section">
+    <div class="sec-label">Coloration de la carte</div>
     <div class="chip-row" id="unit-tabs">
-      <button class="chip active" data-unit="cp">CP</button>
+      <button class="chip" data-unit="cp">Zone temps</button>
+      <button class="chip active" data-unit="ta-source">TA source</button>
       <button class="chip" data-unit="population">Population</button>
       <button class="chip" data-unit="distance">Dist. km</button>
       <button class="chip" data-unit="time">Temps</button>
@@ -587,7 +593,7 @@ html,body{height:100%;overflow:hidden;
   </div>
 
   <div class="panel-section">
-    <div class="sec-label">Répartition par TA</div>
+    <div class="sec-label">Répartition par TA source</div>
     <div class="bar-chart" id="bar-chart"></div>
   </div>
 

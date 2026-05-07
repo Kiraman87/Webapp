@@ -218,8 +218,8 @@ window.PMA_MAPPINGS = {
     "storeCode": "562",
     "pma": "Lyon",
     "flux": "CCD",
-    "label": "Lyon · CCD (CDC SQG → LSC2560)",
-    "transitVia": "CDC SQG → LSC2560",
+    "label": "Lyon · CCD (CDC SQF → LSC2560)",
+    "transitVia": "CDC SQF → LSC2560",
     "zones": {
       "TA01": {
         "label": "TA01",

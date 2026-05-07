@@ -7,6 +7,18 @@ window.PMA_MAPPINGS = {
     "431": { code: "431", name: "IKEA Saint-Étienne", lat: 45.4760, lng: 4.3870, cp: "42000", pma: "Saint-Étienne" },
     "435": { code: "435", name: "IKEA Grenoble", lat: 45.1850, lng: 5.7650, cp: "38400", pma: "Grenoble" },
   },
+  logisticsNodes: {
+    "CDC SQF": {
+      code: "CDC SQF", type: "CDC", label: "CDC Saint-Quentin-Fallavier",
+      lat: 45.6296, lng: 5.0827,
+      description: "Centre de Distribution Central — hub principal flux CCD et LCDI",
+    },
+    "LSC1545": { code: "LSC1545", type: "LSC", parent: "CDC SQF", label: "LSC1545 (intégré CDC SQF)", flux: "LCDI" },
+    "LSC1546": { code: "LSC1546", type: "LSC", parent: "CDC SQF", label: "LSC1546 (SQF)",            flux: "CCD" },
+    "LSC2551": { code: "LSC2551", type: "LSC", parent: "CDC SQF", label: "LSC2551 (SQF)",            flux: "CCD" },
+    "LSC2552": { code: "LSC2552", type: "LSC", parent: "CDC SQF", label: "LSC2552 (SQF)",            flux: "CCD" },
+    "LSC2560": { code: "LSC2560", type: "LSC", parent: "CDC SQF", label: "LSC2560 (intégré CDC SQF)", flux: "CCD" },
+  },
   flows: [
   {
     "storeCode": "562",

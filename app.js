@@ -100,6 +100,7 @@ let state = {
   mode:              'polygons',
   basemap:           'light',
   speedKmh:          65,
+  showLogistics:     true,
   leftOpen:          true,
   rightOpen:         true,
   drawerOpen:        false,
@@ -110,7 +111,7 @@ let state = {
 // ============================================================
 let map;
 let baseLayers = {};
-let layers     = { polygons: [], markers: [], heat: null, stores: [], rings: [] };
+let layers     = { polygons: [], markers: [], heat: null, stores: [], rings: [], logistics: [] };
 let cpData     = {};   // cp → { lat, lng, name, polygons, population }
 let flowsByCP  = {};   // cp → [{ flow, zoneName, zoneLabel }]
 
@@ -347,10 +348,125 @@ function lerpHex(a, b, t) {
 // Map rendering
 // ============================================================
 function clearLayers() {
-  ['polygons','markers','rings','stores'].forEach(k => {
+  ['polygons','markers','rings','stores','logistics'].forEach(k => {
     layers[k].forEach(l => map.removeLayer(l)); layers[k] = [];
   });
   if (layers.heat) { map.removeLayer(layers.heat); layers.heat = null; }
+}
+
+// ============================================================
+// Logistics chain layer (CDC + LSC nodes + flow lines)
+// ============================================================
+function nodeCoord(nodes, key) {
+  const n = nodes[key];
+  if (!n) return null;
+  if (n.lat != null && n.lng != null) return { lat: n.lat, lng: n.lng };
+  if (n.parent && nodes[n.parent]) return { lat: nodes[n.parent].lat, lng: nodes[n.parent].lng };
+  return null;
+}
+
+function renderLogisticsLayer() {
+  if (!state.showLogistics) return;
+  const nodes = M.logisticsNodes || {};
+  if (!Object.keys(nodes).length) return;
+
+  // Resolve which CDCs / LSCs are referenced by visible flows
+  const involvedCDCs = new Set();
+  const lscByCDC = {};            // cdc → Set<lsc>
+  const connections = [];          // {cdc, storeCode, flux, lsc}
+
+  for (const flow of visibleFlows()) {
+    if (!flow.transitVia) continue;
+    const tv = flow.transitVia;
+    const mentioned = Object.keys(nodes).filter(n => tv.includes(n));
+    let cdc = mentioned.find(n => nodes[n].type === 'CDC');
+    const lsc = mentioned.find(n => nodes[n].type === 'LSC');
+    if (!cdc && lsc && nodes[lsc].parent) cdc = nodes[lsc].parent;
+    if (!cdc) continue;
+    involvedCDCs.add(cdc);
+    if (lsc) {
+      if (!lscByCDC[cdc]) lscByCDC[cdc] = new Set();
+      lscByCDC[cdc].add(lsc);
+    }
+    connections.push({ cdc, storeCode: flow.storeCode, flux: flow.flux, lsc });
+  }
+
+  // Render CDC markers
+  for (const cdc of involvedCDCs) {
+    const c = nodeCoord(nodes, cdc);
+    if (!c) continue;
+    const integratedLSCs = [...(lscByCDC[cdc] || [])];
+    const lscRows = integratedLSCs.map(lsc => `<div class="popup-flow-row">
+        <span style="width:8px;height:8px;border-radius:50%;background:${FLUX_COLORS[nodes[lsc].flux]||'#888'};flex-shrink:0;display:inline-block"></span>
+        <b>${lsc}</b>
+        <span style="color:var(--ink-3);margin-left:auto;font-size:9px">${nodes[lsc].flux||''}</span>
+      </div>`).join('');
+    const popupHtml = `<div class="cp-popup">
+      <div class="popup-hdr" style="background:#1A1D23">
+        <div class="popup-cp">${cdc}</div>
+        <div class="popup-name">${nodes[cdc].label}</div>
+      </div>
+      <div class="popup-body">
+        <table class="popup-tbl">
+          <tr><td>Type</td><td>Centre de Distribution</td></tr>
+          <tr><td>Coordonnées</td><td>${c.lat.toFixed(4)}, ${c.lng.toFixed(4)}</td></tr>
+          <tr><td>Stores servis</td><td>${[...new Set(connections.filter(x=>x.cdc===cdc).map(x=>x.storeCode))].join(', ')}</td></tr>
+        </table>
+        <div class="popup-flows-hdr">LSCs intégrés (${integratedLSCs.length})</div>
+        ${lscRows || '<div style="font-size:10px;color:var(--ink-3)">Aucun LSC actif</div>'}
+        <div style="margin-top:9px;font-size:10px;color:var(--ink-3);line-height:1.4">${nodes[cdc].description||''}</div>
+      </div>
+    </div>`;
+
+    const icon = L.divIcon({
+      className: '',
+      html: `<div class="cdc-pin"><span>${cdc.replace('CDC ','')}</span></div>`,
+      iconSize: [56, 56], iconAnchor: [28, 28],
+    });
+    layers.logistics.push(
+      L.marker([c.lat, c.lng], { icon, zIndexOffset: 800 })
+        .bindPopup(popupHtml, { maxWidth: 290 })
+        .addTo(map)
+    );
+  }
+
+  // Render flow lines (CDC ↔ Store) — dedup on cdc/store/flux
+  const drawn = new Set();
+  for (const conn of connections) {
+    const cdcCoord = nodeCoord(nodes, conn.cdc);
+    const store    = M.stores[conn.storeCode];
+    if (!cdcCoord || !store) continue;
+    const key = `${conn.cdc}|${conn.storeCode}|${conn.flux}`;
+    if (drawn.has(key)) continue;
+    drawn.add(key);
+
+    const isLCDI = conn.flux === 'LCDI';
+    // CCD = CDC ships → Store ; LCDI = Store sends → CDC (then to indirect customers)
+    const from = isLCDI ? [store.lat, store.lng]        : [cdcCoord.lat, cdcCoord.lng];
+    const to   = isLCDI ? [cdcCoord.lat, cdcCoord.lng]  : [store.lat, store.lng];
+    const color = FLUX_COLORS[conn.flux] || '#666';
+
+    layers.logistics.push(
+      L.polyline([from, to], {
+        color, weight: 2.8, opacity: .75,
+        dashArray: isLCDI ? '6 5' : null,
+        interactive: false,
+      }).addTo(map)
+    );
+
+    // Arrow head at 80% of line — Unicode triangle rotated
+    const t = 0.80;
+    const aLat = from[0] + (to[0] - from[0]) * t;
+    const aLng = from[1] + (to[1] - from[1]) * t;
+    // Rotation: ▲ points up by default. atan2(dLng, dLat) gives angle from north going east.
+    const angle = Math.atan2(to[1] - from[1], to[0] - from[0]) * 180 / Math.PI;
+    const arrowIcon = L.divIcon({
+      className: '',
+      html: `<div style="font-size:18px;color:${color};line-height:1;transform:rotate(${angle}deg);text-shadow:0 0 3px white,0 0 3px white;font-weight:900">▲</div>`,
+      iconSize: [18, 18], iconAnchor: [9, 9],
+    });
+    layers.logistics.push(L.marker([aLat, aLng], { icon: arrowIcon, interactive: false, zIndexOffset: 700 }).addTo(map));
+  }
 }
 
 function renderMap(records) {
@@ -358,6 +474,7 @@ function renderMap(records) {
   computeScales(records);
   const unique = dedupe(records);
   const bounds = [];
+  renderLogisticsLayer();
 
   // Stores + rings
   const activeCodes = new Set(visibleFlows().map(f => f.storeCode));
@@ -1139,6 +1256,12 @@ function wireUI() {
   const val   = document.getElementById('speed-val');
   range.oninput  = () => { state.speedKmh = +range.value; val.textContent = `${range.value} km/h`; };
   range.onchange = () => renderAll();
+
+  const togLog = document.getElementById('toggle-logistics');
+  if (togLog) {
+    togLog.checked = state.showLogistics;
+    togLog.onchange = () => { state.showLogistics = togLog.checked; renderAll(); };
+  }
 
   document.getElementById('left-close').onclick  = () => { state.leftOpen  = false; updatePanelPositions(); };
   document.getElementById('right-close').onclick = () => { state.rightOpen = false; updatePanelPositions(); };

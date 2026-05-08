@@ -7,6 +7,12 @@ window.PMA_MAPPINGS = {
     "431": { code: "431", name: "IKEA Saint-Étienne", lat: 45.4760, lng: 4.3870, cp: "42000", pma: "Saint-Étienne" },
     "435": { code: "435", name: "IKEA Grenoble", lat: 45.1850, lng: 5.7650, cp: "38400", pma: "Grenoble" },
   },
+  // Magasins de référence pour l'analyse d'optimisation inter-PMA (hors plan actif)
+  supportStores: {
+    "Clermont": { code: "Clermont", name: "IKEA Clermont-Ferrand", lat: 45.7897, lng: 3.0996 },
+    "Avignon":  { code: "Avignon",  name: "IKEA Avignon",          lat: 43.9049, lng: 4.7756 },
+    "Dijon":    { code: "Dijon",    name: "IKEA Dijon",            lat: 47.3220, lng: 5.0415 },
+  },
   logisticsNodes: {
     "CDC SQF": {
       code: "CDC SQF", type: "CDC", operator: "IKEA",

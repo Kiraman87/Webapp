@@ -486,6 +486,15 @@ html,body{height:100%;overflow:hidden;
 
 /* ── Empty state ── */
 .empty{text-align:center;padding:28px 16px;color:var(--ink-3);font-size:12px;line-height:1.6;}
+
+/* ── Support store ghost pin ── */
+.support-pin{
+  width:36px;height:36px;border-radius:50%;
+  background:#E5E7EB;border:2.5px dashed #9CA3AF;
+  display:grid;place-items:center;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+}
+.support-pin span{color:#6B7280;font-weight:900;font-size:9px;letter-spacing:.04em;}
 </style>
 </head>
 <body>
@@ -620,6 +629,13 @@ html,body{height:100%;overflow:hidden;
         <small>CDC SQF + LSCs intégrés + flèches CCD/LCDI</small>
       </span>
     </label>
+    <label class="toggle-row" for="toggle-optimal" style="margin-top:6px">
+      <input type="checkbox" id="toggle-optimal">
+      <span class="toggle-text">
+        <b>Plan optimal distance</b>
+        <small>Colorie chaque CP selon le magasin le plus proche (incl. Clermont, Avignon, Dijon)</small>
+      </span>
+    </label>
   </div>
 
   <div class="panel-section">
@@ -659,6 +675,11 @@ html,body{height:100%;overflow:hidden;
   <div class="panel-section">
     <div class="sec-label">Pistes d'optimisation</div>
     <div id="insights"></div>
+  </div>
+
+  <div class="panel-section">
+    <div class="sec-label">Simulateur inter-PMA</div>
+    <div id="scenario-panel"></div>
   </div>
 </div>
 

@@ -92,7 +92,7 @@ function sourceTASortKey(name) {
 // ============================================================
 let state = {
   selectedPMAs:      new Set(['Lyon']),
-  enabledFlowIds:    new Set(M.flows.map(f => f._id)),  // all on by default
+  enabledFlowIds:    new Set(M.flows.map(f => f._id)),
   zoneFilter:        'all',
   taSourceFilter:    'all',
   cpCategoryFilter:  'all',
@@ -101,6 +101,8 @@ let state = {
   basemap:           'light',
   speedKmh:          65,
   showLogistics:     true,
+  showOptimalOverlay: false,
+  scenario:          { active: false, name: 'Scénario 1', assignments: {} },
   leftOpen:          true,
   rightOpen:         true,
   drawerOpen:        false,
@@ -112,8 +114,9 @@ let state = {
 let map;
 let baseLayers = {};
 let layers     = { polygons: [], markers: [], heat: null, stores: [], rings: [], logistics: [] };
-let cpData     = {};   // cp → { lat, lng, name, polygons, population }
-let flowsByCP  = {};   // cp → [{ flow, zoneName, zoneLabel }]
+let cpData     = {};        // cp → { lat, lng, name, polygons, population }
+let flowsByCP  = {};        // cp → [{ flow, zoneName, zoneLabel }]
+let distMatrix = {};        // distMatrix[cp][storeCode] = km (all stores + supportStores)
 
 // ============================================================
 // Bootstrap
@@ -123,6 +126,7 @@ let flowsByCP  = {};   // cp → [{ flow, zoneName, zoneLabel }]
   wireUI();
   buildFlowIndex();
   await loadCPGeometry();
+  buildDistMatrix();
   document.getElementById('loading').style.display = 'none';
   renderAll();
 })();
@@ -244,6 +248,121 @@ function fmtTime(h) {
 
 function principalStore(pma) {
   return Object.values(M.stores).find(s => s.pma === pma);
+}
+
+function allStoresForOptim() {
+  return { ...M.stores, ...(M.supportStores || {}) };
+}
+
+// Build distance matrix: cp → { storeCode → km } for ALL stores (active + support)
+function buildDistMatrix() {
+  const allS = allStoresForOptim();
+  for (const [cp, d] of Object.entries(cpData)) {
+    distMatrix[cp] = {};
+    for (const [code, s] of Object.entries(allS)) {
+      distMatrix[cp][code] = haversine(d.lat, d.lng, s.lat, s.lng);
+    }
+  }
+}
+
+// Returns the store code with minimum distance to this CP (active + support stores)
+function getOptimalStore(cp) {
+  const dists = distMatrix[cp];
+  if (!dists) return null;
+  let best = null, bestD = Infinity;
+  for (const [code, d] of Object.entries(dists)) {
+    if (d < bestD) { bestD = d; best = code; }
+  }
+  return best;
+}
+
+// Fill color for optimal-overlay mode: PMA color for active stores, gray for support
+function getOptimalColor(cp) {
+  const code = getOptimalStore(cp);
+  if (!code) return '#6B7280';
+  const pma = M.stores[code]?.pma;
+  return pma ? PMA_COLORS[pma] : '#9CA3AF';
+}
+
+// Scenario: assign/unassign a CP, re-render
+function assignScenario(cp, storeCode) {
+  if (storeCode) state.scenario.assignments[cp] = storeCode;
+  else delete state.scenario.assignments[cp];
+  map.closePopup();
+  renderAll();
+}
+function unassignCP(cp) { delete state.scenario.assignments[cp]; renderAll(); }
+function resetScenario() { state.scenario.assignments = {}; renderAll(); }
+function toggleScenario() { state.scenario.active = !state.scenario.active; renderAll(); }
+function toggleOptimalOverlay() { state.showOptimalOverlay = !state.showOptimalOverlay; renderAll(); }
+
+function exportScenario() {
+  const data = {
+    name: state.scenario.name,
+    timestamp: new Date().toISOString(),
+    assignments: state.scenario.assignments,
+    kpis: { reassigned: Object.keys(state.scenario.assignments).length },
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), { href: url, download: `scenario-pma-${Date.now()}.json` }).click();
+  URL.revokeObjectURL(url);
+}
+
+// Quick-load scenario: Lyon (562) takes Z1+Z2 of Saint-Étienne (431)
+function quickLoadLyonSupport431() {
+  for (const flow of M.flows) {
+    if (flow.storeCode !== '431') continue;
+    for (const [zoneName, zone] of Object.entries(flow.zones)) {
+      const n = normalizeTA(zoneName);
+      if (n !== 'TA1' && n !== 'TA2') continue;
+      zone.cps.forEach(cp => { state.scenario.assignments[String(cp).trim().padStart(5,'0')] = '562'; });
+    }
+  }
+  state.scenario.active = true; renderAll();
+}
+
+// Quick-load: Lyon (562) takes Chambéry (73xxx) + Voiron area from Grenoble (435)
+function quickLoadLyonChamberysVoiron() {
+  const VOIRON = new Set(['38500','38290','38330','38340','38480']);
+  for (const flow of M.flows) {
+    if (flow.storeCode !== '435') continue;
+    for (const zone of Object.values(flow.zones)) {
+      zone.cps.forEach(cp => {
+        const k = String(cp).trim().padStart(5,'0');
+        if (k.startsWith('73') || VOIRON.has(k)) state.scenario.assignments[k] = '562';
+      });
+    }
+  }
+  state.scenario.active = true; renderAll();
+}
+
+// Quick-load: Avignon takes Valence area (26xxx) from Grenoble (435)
+function quickLoadAvignonValence() {
+  for (const flow of M.flows) {
+    if (flow.storeCode !== '435') continue;
+    for (const zone of Object.values(flow.zones)) {
+      zone.cps.forEach(cp => {
+        const k = String(cp).trim().padStart(5,'0');
+        if (k.startsWith('26')) state.scenario.assignments[k] = 'Avignon';
+      });
+    }
+  }
+  state.scenario.active = true; renderAll();
+}
+
+// Quick-load: Dijon takes Bourg-en-Bresse area (01xxx) from Lyon (562)
+function quickLoadDijonBourg() {
+  for (const flow of M.flows) {
+    if (flow.storeCode !== '562') continue;
+    for (const zone of Object.values(flow.zones)) {
+      zone.cps.forEach(cp => {
+        const k = String(cp).trim().padStart(5,'0');
+        if (k.startsWith('01')) state.scenario.assignments[k] = 'Dijon';
+      });
+    }
+  }
+  state.scenario.active = true; renderAll();
 }
 
 // ============================================================
@@ -637,6 +756,31 @@ function renderMap(records) {
     );
   }
 
+  // Support store ghost markers (reference for optimization analysis)
+  for (const s of Object.values(M.supportStores || {})) {
+    const icon = L.divIcon({
+      className: '',
+      html: `<div class="support-pin"><span>${s.code.slice(0,3)}</span></div>`,
+      iconSize: [36,36], iconAnchor: [18,36],
+    });
+    layers.stores.push(
+      L.marker([s.lat, s.lng], { icon, zIndexOffset: 900 })
+        .bindPopup(`<div class="cp-popup">
+          <div class="popup-hdr" style="background:#6B7280">
+            <div class="popup-cp">${s.name}</div>
+            <div class="popup-name">Magasin support · référence optimisation</div>
+          </div>
+          <div class="popup-body">
+            <table class="popup-tbl">
+              <tr><td>Code</td><td>${s.code}</td></tr>
+              <tr><td>Coordonnées</td><td>${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</td></tr>
+            </table>
+            <div style="margin-top:8px;font-size:10px;color:var(--ink-3)">Magasin de référence pour l'analyse d'optimisation inter-PMA. Non inclus dans les flux actifs.</div>
+          </div></div>`)
+        .addTo(map)
+    );
+  }
+
   // CPs
   if (state.mode === 'heat') {
     const pts = unique.map(r => [r.lat, r.lng,
@@ -651,23 +795,32 @@ function renderMap(records) {
 
   } else if (state.mode === 'polygons') {
     for (const r of unique) {
-      const color = colorFor(r);
-      const cat = r.category;
-      const borderColor = cat === 'commun' ? '#F59E0B'
-        : cat === 'croise' ? '#7C3AED'
-        : 'rgba(255,255,255,.6)';
-      const borderWeight = cat === 'propre' ? 0.7 : 2.2;
-      const borderDash   = cat === 'croise' ? '6 4' : null;
+      const scenarioCode = state.scenario.active ? state.scenario.assignments[r.cp] : null;
+      let color, borderColor, borderWeight, borderDash;
+      if (state.showOptimalOverlay) {
+        color = getOptimalColor(r.cp);
+        borderColor = 'rgba(255,255,255,.6)';
+        borderWeight = 0.7;
+        borderDash = null;
+      } else if (scenarioCode) {
+        color = '#8B5CF6';
+        borderColor = '#6D28D9';
+        borderWeight = 2.5;
+        borderDash = '4 3';
+      } else {
+        color = colorFor(r);
+        const cat = r.category;
+        borderColor = cat === 'commun' ? '#F59E0B'
+          : cat === 'croise' ? '#7C3AED'
+          : 'rgba(255,255,255,.6)';
+        borderWeight = cat === 'propre' ? 0.7 : 2.2;
+        borderDash = cat === 'croise' ? '6 4' : null;
+      }
       for (const poly of r.polygons) {
         const layer = L.geoJSON(poly, {
-          style: {
-            color: borderColor,
-            weight: borderWeight,
-            dashArray: borderDash,
-            fillColor: color, fillOpacity: .68,
-          },
+          style: { color: borderColor, weight: borderWeight, dashArray: borderDash, fillColor: color, fillOpacity: .68 },
         })
-          .bindPopup(buildPopup(r), { maxWidth: 300 })
+          .bindPopup(buildPopup(r), { maxWidth: 320 })
           .on('mouseover', e => e.target.setStyle({ weight: borderWeight + 1.5, fillOpacity: .88 }))
           .on('mouseout', e => e.target.setStyle({ weight: borderWeight, fillOpacity: .68, color: borderColor, dashArray: borderDash }))
           .addTo(map);
@@ -731,10 +884,47 @@ function buildPopup(r) {
     </div>`;
   }).join('');
 
+  // Distance comparison table (requires distMatrix)
+  const allS = allStoresForOptim();
+  const dists = distMatrix[r.cp];
+  const distRows = dists ? Object.entries(allS)
+    .map(([code, s]) => ({ code, name: s.name.replace('IKEA ',''), dist: dists[code] || 0, isActive: !!M.stores[code] }))
+    .sort((a,b) => a.dist - b.dist)
+    .map(e => {
+      const isCurrent = M.stores[e.code]?.pma === r.flow.pma;
+      const scenarioCurrent = state.scenario.assignments[r.cp] === e.code;
+      const barW = Math.min(100, Math.round(e.dist / 2.5));
+      return `<tr style="${isCurrent ? 'background:var(--blue-lt)' : ''}${scenarioCurrent ? 'background:#EDE9FE' : ''}">
+        <td style="font-weight:${isCurrent||scenarioCurrent?'800':'600'};color:${isCurrent?'var(--blue)':scenarioCurrent?'#7C3AED':'var(--ink-2)'}">${e.name}</td>
+        <td><div style="display:flex;align-items:center;gap:4px"><div style="width:${barW}px;height:4px;border-radius:2px;background:${isCurrent?'var(--blue)':scenarioCurrent?'#8B5CF6':'var(--line)'}"></div><span style="font-size:10px">${Math.round(e.dist)} km</span></div></td>
+      </tr>`;
+    }).join('') : '';
+
+  // Scenario reassignment buttons
+  const scenarioCode = state.scenario.assignments[r.cp];
+  const scenarioSection = state.scenario.active ? `
+    <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line)">
+      <div style="font-size:9px;font-weight:800;color:#7C3AED;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px">🎯 Réaffecter ce CP</div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap">
+        ${Object.values(M.stores).map(s =>
+          `<button onclick="assignScenario('${r.cp}','${s.code}')"
+            style="padding:4px 9px;border-radius:5px;font-size:10px;font-weight:700;border:1.5px solid ${PMA_COLORS[s.pma]};
+            background:${scenarioCode===s.code?PMA_COLORS[s.pma]:'white'};color:${scenarioCode===s.code?'white':PMA_COLORS[s.pma]};cursor:pointer">${s.pma}</button>`
+        ).join('')}
+        ${Object.values(M.supportStores||{}).map(s =>
+          `<button onclick="assignScenario('${r.cp}','${s.code}')"
+            style="padding:4px 9px;border-radius:5px;font-size:10px;font-weight:700;border:1.5px solid #6B7280;
+            background:${scenarioCode===s.code?'#6B7280':'white'};color:${scenarioCode===s.code?'white':'#6B7280'};cursor:pointer">${s.code}</button>`
+        ).join('')}
+        ${scenarioCode ? `<button onclick="assignScenario('${r.cp}',null)"
+          style="padding:4px 9px;border-radius:5px;font-size:10px;font-weight:700;border:1.5px solid #DC2626;color:#DC2626;background:white;cursor:pointer">✕</button>` : ''}
+      </div>
+    </div>` : '';
+
   return `<div class="cp-popup">
-    <div class="popup-hdr" style="background:${color}">
-      <div class="popup-cp">${r.cp}</div>
-      <div class="popup-name">${r.name || ''}</div>
+    <div class="popup-hdr" style="background:${scenarioCode?'#7C3AED':color}">
+      <div class="popup-cp">${r.cp} ${scenarioCode ? '<span style="font-size:12px;opacity:.85">🔀</span>' : ''}</div>
+      <div class="popup-name">${r.name || ''}${scenarioCode ? ` · → ${(allS[scenarioCode]?.name||scenarioCode).replace('IKEA ','')}` : ''}</div>
     </div>
     <div class="popup-body">
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">
@@ -751,12 +941,13 @@ function buildPopup(r) {
       <table class="popup-tbl">
         <tr><td>Zone source</td><td>${r.zoneName} <span style="color:var(--ink-3);font-size:10px">(${r.sourceTA})</span></td></tr>
         <tr><td>Magasin</td><td>${r.store.name.replace('IKEA ','')}</td></tr>
-        <tr><td>Distance</td><td>${Math.round(r.dist)} km</td></tr>
-        <tr><td>Temps trajet</td><td>${fmtTime(r.time)}</td></tr>
         <tr><td>Population</td><td>${fmt(r.population)}</td></tr>
       </table>
+      ${dists ? `<div style="margin-top:9px"><div style="font-size:9px;font-weight:800;color:var(--ink-3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px">Distances tous magasins</div>
+        <table class="popup-tbl">${distRows}</table></div>` : ''}
       <div class="popup-flows-hdr">Tous les flux (${allFlows.length})</div>
       ${flowRows}
+      ${scenarioSection}
     </div>
   </div>`;
 }
@@ -1195,9 +1386,198 @@ function renderInsights(records, unique) {
     </div>`;
   }
 
+  // 5. Distance-optimal re-routing (includes support stores)
+  if (Object.keys(distMatrix).length > 0) {
+    const allS = allStoresForOptim();
+    const optGroups = {};
+    for (const r of unique) {
+      const dists = distMatrix[r.cp];
+      if (!dists) continue;
+      let bestCode = r.store.code, bestD = r.dist;
+      for (const [code, d] of Object.entries(dists)) {
+        if (d < bestD - 10) { bestD = d; bestCode = code; }
+      }
+      if (bestCode === r.store.code) continue;
+      const toStore = allS[bestCode];
+      const key = `${r.store.pma}→${toStore.name || bestCode}`;
+      if (!optGroups[key]) optGroups[key] = { fromPMA: r.store.pma, toStore, toCode: bestCode, cps: [], pop: 0, gain: 0 };
+      optGroups[key].cps.push(r.cp);
+      optGroups[key].pop += r.population;
+      optGroups[key].gain += (r.dist - bestD);
+    }
+    const optEntries = Object.values(optGroups).sort((a,b) => b.pop - a.pop);
+    if (optEntries.length) {
+      const totGain = optEntries.reduce((a,e) => a + e.gain, 0);
+      const totPop  = optEntries.reduce((a,e) => a + e.pop, 0);
+      const rows = optEntries.map(e => {
+        const fromColor = PMA_COLORS[e.fromPMA] || '#888';
+        const toColor = PMA_COLORS[M.stores[e.toCode]?.pma] || '#6B7280';
+        return `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;background:var(--bg);margin-bottom:4px;font-size:10px;font-weight:600">
+          <span style="width:8px;height:8px;border-radius:50%;background:${fromColor};flex-shrink:0"></span>
+          <span style="color:${fromColor}">${e.fromPMA}</span>
+          <span style="color:var(--ink-3)">→</span>
+          <span style="width:8px;height:8px;border-radius:50%;background:${toColor};flex-shrink:0"></span>
+          <span style="color:${toColor}">${(e.toStore.name||e.toCode).replace('IKEA ','')}</span>
+          <span style="color:var(--ink-3);margin-left:auto;font-weight:500">${e.cps.length} CP · ${fmt(e.pop)} hab.</span>
+        </div>`;
+      }).join('');
+      ins.innerHTML += `<div class="insight-card" style="border-color:#8B5CF644">
+        <div class="insight-title"><div class="insight-icon" style="background:#EDE9FE">🎯</div>Optimisation distance (avec magasins support)</div>
+        <div style="margin-bottom:8px;font-size:10px;color:var(--ink-3)">Gain potentiel : <b style="color:var(--ink)">${Math.round(totGain)} km</b> · <b style="color:var(--ink)">${fmt(totPop)} hab.</b> mieux desservis</div>
+        ${rows}
+        <div style="margin-top:9px">
+          <button onclick="toggleOptimalOverlay()" style="padding:5px 12px;border-radius:6px;font-size:10px;font-weight:700;border:1.5px solid #8B5CF6;background:${state.showOptimalOverlay?'#8B5CF6':'white'};color:${state.showOptimalOverlay?'white':'#8B5CF6'};cursor:pointer;font-family:inherit">
+            ${state.showOptimalOverlay ? '✓ Plan optimal actif' : '👁 Voir plan optimal'}
+          </button>
+        </div>
+      </div>`;
+    }
+  }
+
+  // 6. Department-level cluster analysis (groups CPs by dept prefix, finds best alternative)
+  if (Object.keys(distMatrix).length > 0) {
+    const allS = allStoresForOptim();
+    const deptMap = {};
+    for (const r of unique) {
+      const dept = r.cp.slice(0, 2);
+      if (!deptMap[dept]) deptMap[dept] = { dept, recs: [], pop: 0, pma: r.flow.pma };
+      deptMap[dept].recs.push(r);
+      deptMap[dept].pop += r.population;
+    }
+    const clusters = Object.values(deptMap)
+      .filter(d => d.pop > 50000 || d.recs.length >= 5)
+      .map(d => {
+        const avgDists = {};
+        for (const [code] of Object.entries(allS)) {
+          avgDists[code] = d.recs.reduce((a, r) => a + (distMatrix[r.cp]?.[code] || 0), 0) / d.recs.length;
+        }
+        const currentStore = Object.values(M.stores).find(s => s.pma === d.pma);
+        const currentDist = currentStore ? avgDists[currentStore.code] : Infinity;
+        let bestAlt = null, bestAltDist = currentDist;
+        for (const [code, avg] of Object.entries(avgDists)) {
+          if (M.stores[code]?.pma === d.pma) continue;
+          if (avg < bestAltDist - 8) { bestAltDist = avg; bestAlt = allS[code]; }
+        }
+        return { ...d, currentDist, bestAlt, gain: currentDist - bestAltDist };
+      })
+      .filter(d => d.gain > 8)
+      .sort((a,b) => b.pop - a.pop)
+      .slice(0, 6);
+
+    if (clusters.length) {
+      const rows = clusters.map(d => {
+        const fromColor = PMA_COLORS[d.pma] || '#888';
+        const toColor = d.bestAlt ? (PMA_COLORS[M.stores[d.bestAlt.code]?.pma] || '#6B7280') : '#6B7280';
+        return `<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:7px;background:var(--bg);margin-bottom:4px;font-size:10px;font-weight:600">
+          <span style="font-family:monospace;font-size:11px">Dép.<b>${d.dept}</b></span>
+          <span style="color:${fromColor}">${d.pma}</span>
+          ${d.bestAlt ? `<span style="color:var(--ink-3)">→</span><span style="color:${toColor}">${(d.bestAlt.name||d.bestAlt.code).replace('IKEA ','')}</span>` : ''}
+          <span style="color:var(--ink-3);margin-left:auto;font-weight:500">${fmt(d.pop)} hab. · −${Math.round(d.gain)} km</span>
+        </div>`;
+      }).join('');
+      ins.innerHTML += `<div class="insight-card" style="border-color:#06B6D444">
+        <div class="insight-title"><div class="insight-icon" style="background:#E0F2FE">🗺️</div>Clusters départementaux à optimiser</div>
+        ${rows}
+        <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Départements où un autre magasin est en moyenne plus proche. Activez le scénario pour simuler.</div>
+      </div>`;
+    }
+  }
+
   if (!ins.innerHTML) ins.innerHTML = `<div class="insight-card" style="color:var(--ink-3);text-align:center;padding:16px">
     ✓ Aucune anomalie détectée.
   </div>`;
+}
+
+// ============================================================
+// Scenario panel
+// ============================================================
+function renderScenarioPanel() {
+  const box = document.getElementById('scenario-panel');
+  if (!box) return;
+  const assignments = state.scenario.assignments;
+  const assignedCPs = Object.keys(assignments);
+  const allS = allStoresForOptim();
+
+  // Compute KPIs
+  let assignedPop = 0, gainKm = 0;
+  for (const cp of assignedCPs) {
+    const d = cpData[cp]; if (!d) continue;
+    assignedPop += d.population || 0;
+    const toCode = assignments[cp];
+    const fromFlows = flowsByCP[cp] || [];
+    if (fromFlows.length && distMatrix[cp]) {
+      const fromCode = fromFlows[0].flow.storeCode;
+      gainKm += (distMatrix[cp][fromCode] || 0) - (distMatrix[cp][toCode] || 0);
+    }
+  }
+
+  const QUICK = [
+    { label: '562 support 431 · Z1+Z2', emoji: '🔵→🔴', desc: 'Lyon prend Z1+Z2 de Saint-Étienne', fn: 'quickLoadLyonSupport431' },
+    { label: '562 direct · Chambéry+Voiron', emoji: '🔵→🟢', desc: 'Lyon prend 73xxx de Grenoble', fn: 'quickLoadLyonChamberysVoiron' },
+    { label: 'Avignon · Valence (26xxx)', emoji: '⚪→🟢', desc: 'Avignon prend dép.26 de Grenoble', fn: 'quickLoadAvignonValence' },
+    { label: 'Dijon · Bourg+Mâcon (01xxx)', emoji: '⚪→🔵', desc: 'Dijon prend dép.01 de Lyon', fn: 'quickLoadDijonBourg' },
+  ];
+
+  const assignedList = assignedCPs.slice(0, 8).map(cp => {
+    const toStore = allS[assignments[cp]];
+    const toColor = PMA_COLORS[M.stores[assignments[cp]]?.pma] || '#6B7280';
+    const fromFlows = flowsByCP[cp] || [];
+    const fromPMA = fromFlows[0]?.flow?.pma || '?';
+    const fromColor = PMA_COLORS[fromPMA] || '#888';
+    return `<div style="display:flex;align-items:center;gap:5px;padding:4px 8px;border-radius:6px;background:var(--bg);margin-bottom:3px;font-size:10px">
+      <code style="font-family:monospace;font-weight:700;font-size:11px">${cp}</code>
+      <span style="color:${fromColor};font-size:9px">${fromPMA}</span>
+      <span style="color:var(--ink-3)">→</span>
+      <span style="color:${toColor};font-weight:700">${(toStore?.name||assignments[cp]).replace('IKEA ','')}</span>
+      <button onclick="unassignCP('${cp}')" style="margin-left:auto;padding:1px 5px;border-radius:4px;border:1px solid #DC2626;color:#DC2626;background:white;cursor:pointer;font-size:9px;font-family:inherit">✕</button>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = `
+    <label class="toggle-row" for="toggle-scenario" style="margin-bottom:10px">
+      <input type="checkbox" id="toggle-scenario" ${state.scenario.active ? 'checked' : ''} onchange="toggleScenario()">
+      <span class="toggle-text">
+        <b>Mode scénario actif</b>
+        <small>Cliquez un CP sur la carte pour le réaffecter</small>
+      </span>
+    </label>
+
+    ${state.scenario.active ? `
+    <div class="sec-label" style="margin-bottom:7px">Chargement rapide — slides PMA</div>
+    <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:12px">
+      ${QUICK.map(q => `<button onclick="${q.fn}()"
+        style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;border:1.5px solid var(--line);background:var(--bg);cursor:pointer;font-family:inherit;text-align:left;width:100%;transition:all .15s"
+        onmouseover="this.style.background='white';this.style.borderColor='#8B5CF6'"
+        onmouseout="this.style.background='';this.style.borderColor=''">
+        <span style="font-size:14px">${q.emoji}</span>
+        <div><div style="font-size:11px;font-weight:700;color:var(--ink)">${q.label}</div>
+        <div style="font-size:10px;color:var(--ink-3)">${q.desc}</div></div>
+      </button>`).join('')}
+    </div>
+
+    <div class="sec-label" style="margin-bottom:7px">KPIs scénario</div>
+    <div class="stat-grid" style="margin-bottom:10px">
+      <div class="stat-card"><div class="stat-num">${assignedCPs.length}</div><div class="stat-label">CP réaffectés</div></div>
+      <div class="stat-card"><div class="stat-num">${Math.round(assignedPop/1000)}<small>k</small></div><div class="stat-label">Habitants</div></div>
+      <div class="stat-card" style="grid-column:1/-1">
+        <div class="stat-num" style="color:${gainKm>=0?'var(--success)':'var(--danger)'}">
+          ${gainKm>=0?'+':''}${Math.round(gainKm)}<small>km</small>
+        </div>
+        <div class="stat-label">Gain total estimé / tournée</div>
+      </div>
+    </div>
+
+    ${assignedCPs.length > 0 ? `
+      <div class="sec-label" style="margin-bottom:7px">Réaffectations (${assignedCPs.length})</div>
+      ${assignedList}
+      ${assignedCPs.length > 8 ? `<div style="font-size:10px;color:var(--ink-3);margin-top:3px">…et ${assignedCPs.length-8} autres</div>` : ''}
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button onclick="exportScenario()" style="flex:1;padding:7px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid var(--blue);color:var(--blue);background:white;cursor:pointer;font-family:inherit">📥 Export JSON</button>
+        <button onclick="resetScenario()" style="padding:7px 12px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid var(--danger);color:var(--danger);background:white;cursor:pointer;font-family:inherit">Reset</button>
+      </div>
+    ` : `<div style="font-size:11px;color:var(--ink-3)">Utilisez les boutons ci-dessus ou cliquez un CP sur la carte.</div>`}
+    ` : `<div style="font-size:11px;color:var(--ink-3)">Activez le mode scénario pour tester des réaffectations et mesurer l'impact.</div>`}
+  `;
 }
 
 // ============================================================
@@ -1390,6 +1770,11 @@ function wireUI() {
     togLog.checked = state.showLogistics;
     togLog.onchange = () => { state.showLogistics = togLog.checked; renderAll(); };
   }
+  const togOpt = document.getElementById('toggle-optimal');
+  if (togOpt) {
+    togOpt.checked = state.showOptimalOverlay;
+    togOpt.onchange = () => { state.showOptimalOverlay = togOpt.checked; renderAll(); };
+  }
 
   document.getElementById('left-close').onclick  = () => { state.leftOpen  = false; updatePanelPositions(); };
   document.getElementById('right-close').onclick = () => { state.rightOpen = false; updatePanelPositions(); };
@@ -1423,4 +1808,5 @@ function renderAll() {
   renderLegend();
   renderRightPanel(records);
   renderDeptTables(records);
+  renderScenarioPanel();
 }

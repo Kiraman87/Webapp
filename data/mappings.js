@@ -6,7 +6,7 @@ window.PMA_MAPPINGS = {
     "562": { code: "562", name: "IKEA Lyon Grand Parilly", lat: 45.7035, lng: 4.9020, cp: "69200", pma: "Lyon" },
     "431": { code: "431", name: "IKEA Saint-Étienne", lat: 45.4760, lng: 4.3870, cp: "42000", pma: "Saint-Étienne" },
     "435": { code: "435", name: "IKEA Grenoble", lat: 45.1850, lng: 5.7650, cp: "38400", pma: "Grenoble" },
-    "408": { code: "408", name: "IKEA Clermont-Ferrand", lat: 45.8133, lng: 3.1428, cp: "63118", pma: "Clermont" },
+    "345": { code: "345", name: "IKEA Clermont-Ferrand", lat: 45.8133, lng: 3.1428, cp: "63118", pma: "Clermont" },
   },
   // Magasins de référence pour l'analyse d'optimisation inter-PMA (hors plan actif)
   supportStores: {
@@ -1509,10 +1509,10 @@ window.PMA_MAPPINGS = {
     }
   },
   {
-    "storeCode": "408",
+    "storeCode": "345",
     "pma": "Clermont",
     "flux": "LCDD",
-    "label": "Clermont · LCDD (départ magasin direct STO408)",
+    "label": "Clermont · LCDD (départ magasin direct STO345)",
     "zones": {
       "TA 1": {
         "label": "TA 1",
@@ -1572,11 +1572,11 @@ window.PMA_MAPPINGS = {
     }
   },
   {
-    "storeCode": "408",
+    "storeCode": "345",
     "pma": "Clermont",
     "flux": "LCDI",
-    "label": "Clermont · LCDI (depot 408 → LSC2552)",
-    "transitVia": "STO408 → LSC2552",
+    "label": "Clermont · LCDI (depot 345 → LSC2552)",
+    "transitVia": "STO345 → LSC2552",
     "zones": {
       "TA 1": {
         "label": "TA 1",
@@ -1609,7 +1609,7 @@ window.PMA_MAPPINGS = {
 
 window.PMA_LIST = ["Lyon", "Saint-Étienne", "Grenoble", "Clermont"];
 window.FLUX_LIST = ["CCD", "LCDD", "LCDI"];
-window.STORE_LIST = ["562", "431", "435", "408"];
+window.STORE_LIST = ["562", "431", "435", "345"];
 
 window.PMA_COLORS = {
   "Lyon": "#0058A3",

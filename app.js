@@ -374,21 +374,21 @@ function quickLoadClermontRoanne() {
     for (const zone of Object.values(flow.zones)) {
       zone.cps.forEach(cp => {
         const k = String(cp).trim().padStart(5,'0');
-        if (ROANNE.has(k)) state.scenario.assignments[k] = '408';
+        if (ROANNE.has(k)) state.scenario.assignments[k] = '345';
       });
     }
   }
   state.scenario.active = true; renderAll();
 }
 
-// Quick-load: Clermont takes Annecy LCDI zone from Grenoble (435 → 408 via LSC2552)
+// Quick-load: Clermont takes Annecy LCDI zone from Grenoble (435 → 345 via LSC2552)
 function quickLoadClermontAnnecy() {
   for (const flow of M.flows) {
     if (flow.storeCode !== '435') continue;
     for (const zone of Object.values(flow.zones)) {
       zone.cps.forEach(cp => {
         const k = String(cp).trim().padStart(5,'0');
-        if (k.startsWith('74') || k.startsWith('73')) state.scenario.assignments[k] = '408';
+        if (k.startsWith('74') || k.startsWith('73')) state.scenario.assignments[k] = '345';
       });
     }
   }
@@ -1546,8 +1546,8 @@ function renderScenarioPanel() {
     { label: '562 direct · Chambéry+Voiron', emoji: '🔵→🟢', desc: 'Lyon prend 73xxx de Grenoble', fn: 'quickLoadLyonChamberysVoiron' },
     { label: 'Avignon · Valence (26xxx)', emoji: '🟡→🟢', desc: 'Avignon prend dép.26 de Grenoble', fn: 'quickLoadAvignonValence' },
     { label: 'Dijon · Bourg+Mâcon (01xxx)', emoji: '🟡→🔵', desc: 'Dijon prend dép.01 de Lyon', fn: 'quickLoadDijonBourg' },
-    { label: '408 Clermont · Roanne', emoji: '🟣→🔴', desc: 'Clermont prend Roanne de Saint-Étienne', fn: 'quickLoadClermontRoanne' },
-    { label: '408 Clermont · Annecy LCDI', emoji: '🟣→🟢', desc: 'Clermont prend 73/74 de Grenoble', fn: 'quickLoadClermontAnnecy' },
+    { label: '345 Clermont · Roanne', emoji: '🟣→🔴', desc: 'Clermont prend Roanne de Saint-Étienne', fn: 'quickLoadClermontRoanne' },
+    { label: '345 Clermont · Annecy LCDI', emoji: '🟣→🟢', desc: 'Clermont prend 73/74 de Grenoble', fn: 'quickLoadClermontAnnecy' },
   ];
 
   const assignedList = assignedCPs.slice(0, 8).map(cp => {

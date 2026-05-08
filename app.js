@@ -365,6 +365,36 @@ function quickLoadDijonBourg() {
   state.scenario.active = true; renderAll();
 }
 
+// Quick-load: Clermont takes Roanne agglomeration (42300/42600/42120/42470 etc.) from Saint-Étienne (431)
+function quickLoadClermontRoanne() {
+  // Roanne arrondissement zips: 42300, 42120, 42155, 42190, 42310, 42410, 42470, 42600, 42640, 42670, 42720, 42820, 42840
+  const ROANNE = new Set(['42300','42120','42155','42190','42310','42410','42470','42600','42640','42670','42720','42820','42840','42370','42390','42420','42460']);
+  for (const flow of M.flows) {
+    if (flow.storeCode !== '431') continue;
+    for (const zone of Object.values(flow.zones)) {
+      zone.cps.forEach(cp => {
+        const k = String(cp).trim().padStart(5,'0');
+        if (ROANNE.has(k)) state.scenario.assignments[k] = '408';
+      });
+    }
+  }
+  state.scenario.active = true; renderAll();
+}
+
+// Quick-load: Clermont takes Annecy LCDI zone from Grenoble (435 → 408 via LSC2552)
+function quickLoadClermontAnnecy() {
+  for (const flow of M.flows) {
+    if (flow.storeCode !== '435') continue;
+    for (const zone of Object.values(flow.zones)) {
+      zone.cps.forEach(cp => {
+        const k = String(cp).trim().padStart(5,'0');
+        if (k.startsWith('74') || k.startsWith('73')) state.scenario.assignments[k] = '408';
+      });
+    }
+  }
+  state.scenario.active = true; renderAll();
+}
+
 // ============================================================
 // Aggregation
 // ============================================================
@@ -1514,8 +1544,10 @@ function renderScenarioPanel() {
   const QUICK = [
     { label: '562 support 431 · Z1+Z2', emoji: '🔵→🔴', desc: 'Lyon prend Z1+Z2 de Saint-Étienne', fn: 'quickLoadLyonSupport431' },
     { label: '562 direct · Chambéry+Voiron', emoji: '🔵→🟢', desc: 'Lyon prend 73xxx de Grenoble', fn: 'quickLoadLyonChamberysVoiron' },
-    { label: 'Avignon · Valence (26xxx)', emoji: '⚪→🟢', desc: 'Avignon prend dép.26 de Grenoble', fn: 'quickLoadAvignonValence' },
-    { label: 'Dijon · Bourg+Mâcon (01xxx)', emoji: '⚪→🔵', desc: 'Dijon prend dép.01 de Lyon', fn: 'quickLoadDijonBourg' },
+    { label: 'Avignon · Valence (26xxx)', emoji: '🟡→🟢', desc: 'Avignon prend dép.26 de Grenoble', fn: 'quickLoadAvignonValence' },
+    { label: 'Dijon · Bourg+Mâcon (01xxx)', emoji: '🟡→🔵', desc: 'Dijon prend dép.01 de Lyon', fn: 'quickLoadDijonBourg' },
+    { label: '408 Clermont · Roanne', emoji: '🟣→🔴', desc: 'Clermont prend Roanne de Saint-Étienne', fn: 'quickLoadClermontRoanne' },
+    { label: '408 Clermont · Annecy LCDI', emoji: '🟣→🟢', desc: 'Clermont prend 73/74 de Grenoble', fn: 'quickLoadClermontAnnecy' },
   ];
 
   const assignedList = assignedCPs.slice(0, 8).map(cp => {

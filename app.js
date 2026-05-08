@@ -363,29 +363,62 @@ const HUB_COLORS = {
   'JP Home': { roof: '#FFD54F', body: '#E65100' },
 };
 
-function hubIcon(node, isSmall) {
+// Compute pixel offset to push LSC icon away from nearest store when overlapping
+function computeNodeOffset(node) {
+  let nearest = null, minDist = Infinity;
+  for (const s of Object.values(M.stores)) {
+    const d = haversine(node.lat, node.lng, s.lat, s.lng);
+    if (d < minDist) { minDist = d; nearest = s; }
+  }
+  if (minDist > 18 || !nearest) return [0, 0];   // far enough, no offset needed
+  const dLat = node.lat - nearest.lat;
+  const dLng = node.lng - nearest.lng;
+  const len = Math.sqrt(dLat*dLat + dLng*dLng) || 0.0001;
+  // Push 38px in same direction as LSC is from store
+  return [(dLng/len) * 38, (dLat/len) * 38];
+}
+
+function hubIcon(node, isSmall, ofX = 0, ofY = 0) {
   const c  = HUB_COLORS[node.operator] || { roof: '#9CA3AF', body: '#4B5563' };
   const code = (node.code || '').replace(/^CDC /, '').replace(/^LSC/, '');
-  const op = node.operator || '';
-  const W = isSmall ? 44 : 56, H = isSmall ? 42 : 52;
-  const rPts = isSmall ? '22,2 42,16 2,16' : '28,2 54,20 2,20';
-  const [bX,bY,bW,bH] = isSmall ? [3,16,38,24] : [3,20,50,30];
-  const [wY,wH,wW,w1X,w2X] = isSmall ? [21,6,8,6,30] : [26,7,10,7,39];
-  const [dX,dY,dW,dH] = isSmall ? [17,27,10,13] : [22,33,12,17];
-  const [tX,tY,fS] = isSmall ? [W/2,38,9] : [W/2,47,10];
-  const totalH = H + 11;
-  const html = `<div style="text-align:center;display:inline-block;filter:drop-shadow(0 4px 12px rgba(0,0,0,.55))">
-    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
-      <polygon points="${rPts}" fill="${c.roof}"/>
-      <rect x="${bX}" y="${bY}" width="${bW}" height="${bH}" rx="3" fill="${c.body}"/>
-      <rect x="${dX}" y="${dY}" width="${dW}" height="${dH}" rx="2" fill="rgba(0,0,0,.32)"/>
-      <rect x="${w1X}" y="${wY}" width="${wW}" height="${wH}" rx="1" fill="rgba(255,255,255,.42)"/>
-      <rect x="${w2X}" y="${wY}" width="${wW}" height="${wH}" rx="1" fill="rgba(255,255,255,.42)"/>
-      <text x="${tX}" y="${tY}" text-anchor="middle" fill="white" font-size="${fS}" font-weight="900" font-family="system-ui,sans-serif">${code}</text>
-    </svg>
-    <div style="background:${c.body};color:rgba(255,255,255,.88);font-size:7px;font-weight:800;padding:1px 5px;border-radius:0 0 3px 3px;letter-spacing:.06em;font-family:system-ui,sans-serif;line-height:1.5;margin-top:-2px">${op}</div>
-  </div>`;
-  return L.divIcon({ className: '', html, iconSize: [W, totalH], iconAnchor: [W/2, totalH] });
+  let W, H, html, totalH;
+
+  if (isSmall) {
+    // Compact LSC: 34×30 SVG, no operator badge (color speaks)
+    W = 34; H = 30; totalH = H;
+    html = `<div style="display:inline-block;filter:drop-shadow(0 2px 6px rgba(0,0,0,.55))">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="17,1 32,12 2,12" fill="${c.roof}"/>
+        <rect x="2" y="12" width="30" height="16" rx="2.5" fill="${c.body}"/>
+        <rect x="13" y="20" width="8" height="8" rx="1" fill="rgba(0,0,0,.30)"/>
+        <text x="${W/2}" y="19.5" text-anchor="middle" fill="white" font-size="9" font-weight="900" font-family="system-ui,sans-serif">${code}</text>
+      </svg>
+    </div>`;
+  } else {
+    // CDC large: 50×46 SVG + 10px operator label
+    W = 50; H = 46;
+    const op = node.operator || '';
+    totalH = H + 10;
+    html = `<div style="text-align:center;display:inline-block;filter:drop-shadow(0 4px 12px rgba(0,0,0,.55))">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="25,2 48,18 2,18" fill="${c.roof}"/>
+        <rect x="3" y="18" width="44" height="26" rx="3" fill="${c.body}"/>
+        <rect x="20" y="29" width="10" height="15" rx="2" fill="rgba(0,0,0,.34)"/>
+        <rect x="7" y="23" width="9" height="6" rx="1" fill="rgba(255,255,255,.42)"/>
+        <rect x="34" y="23" width="9" height="6" rx="1" fill="rgba(255,255,255,.42)"/>
+        <text x="${W/2}" y="42" text-anchor="middle" fill="white" font-size="10" font-weight="900" font-family="system-ui,sans-serif">${code}</text>
+      </svg>
+      <div style="background:${c.body};color:rgba(255,255,255,.88);font-size:7px;font-weight:800;padding:1px 5px;border-radius:0 0 3px 3px;letter-spacing:.06em;font-family:system-ui,sans-serif;line-height:1.5;margin-top:-2px">${op}</div>
+    </div>`;
+  }
+
+  // iconAnchor: bottom-center by default ([W/2, totalH]); offset shifts visually NE/SW
+  return L.divIcon({
+    className: '',
+    html,
+    iconSize: [W, totalH],
+    iconAnchor: [W/2 - ofX, totalH + ofY],
+  });
 }
 
 function addArrowLine(from, to, color, dashed) {
@@ -432,6 +465,21 @@ function nodePopup(nodeKey, nodes, connections) {
   </div>`;
 }
 
+// Draw a thin leader line from real geo position to the offset icon position
+function addLeaderLine(latlng, ofX, ofY) {
+  if (!ofX && !ofY) return;
+  // Convert pixel offset → approx lat/lng offset using current map zoom
+  const pt = map.latLngToLayerPoint(latlng);
+  const offsetPt = L.point(pt.x + ofX, pt.y - ofY);
+  const offsetLatLng = map.layerPointToLatLng(offsetPt);
+  layers.logistics.push(
+    L.polyline([latlng, offsetLatLng], {
+      color: '#9CA3AF', weight: 1, opacity: .6,
+      dashArray: '2 3', interactive: false,
+    }).addTo(map)
+  );
+}
+
 function renderLogisticsLayer() {
   if (!state.showLogistics) return;
   const nodes = M.logisticsNodes || {};
@@ -458,22 +506,26 @@ function renderLogisticsLayer() {
   for (const cdcKey of activeCDCs) {
     const n = nodes[cdcKey];
     if (!n?.lat) continue;
+    const [ofX, ofY] = computeNodeOffset(n);
+    addLeaderLine([n.lat, n.lng], ofX, ofY);
     layers.logistics.push(
-      L.marker([n.lat, n.lng], { icon: hubIcon(n, false), zIndexOffset: 900 })
+      L.marker([n.lat, n.lng], { icon: hubIcon(n, false, ofX, ofY), zIndexOffset: 900 })
         .bindPopup(nodePopup(cdcKey, nodes, connections), { maxWidth: 290 })
         .addTo(map)
     );
   }
 
-  // --- LSC markers (small) for active LSCs with own coords ---
+  // --- LSC markers (small compact) for active LSCs with own coords ---
   for (const lscKey of activeLSCs) {
     const n = nodes[lscKey];
     if (!n?.lat) continue;
     // Skip if co-located with active CDC (would overlap)
     const parentCDC = [...activeCDCs].find(c => nodes[c].lat === n.lat && nodes[c].lng === n.lng);
     if (parentCDC) continue;
+    const [ofX, ofY] = computeNodeOffset(n);
+    addLeaderLine([n.lat, n.lng], ofX, ofY);
     layers.logistics.push(
-      L.marker([n.lat, n.lng], { icon: hubIcon(n, true), zIndexOffset: 850 })
+      L.marker([n.lat, n.lng], { icon: hubIcon(n, true, ofX, ofY), zIndexOffset: 850 })
         .bindPopup(nodePopup(lscKey, nodes, connections), { maxWidth: 270 })
         .addTo(map)
     );
@@ -517,14 +569,14 @@ function renderLogisticsLayer() {
   for (const [key, n] of Object.entries(nodes)) {
     if (!n.lat) continue;
     if (activeCDCs.has(key) || activeLSCs.has(key)) continue;
-    // Skip co-located with an active CDC
     const coloc = [...activeCDCs].some(c => nodes[c]?.lat === n.lat && nodes[c]?.lng === n.lng);
     if (coloc) continue;
+    const [ofX, ofY] = computeNodeOffset(n);
     layers.logistics.push(
       L.marker([n.lat, n.lng], {
-        icon: hubIcon(n, n.type !== 'CDC'),
+        icon: hubIcon(n, n.type !== 'CDC', ofX, ofY),
         zIndexOffset: n.type === 'CDC' ? 900 : 850,
-        opacity: 0.38,
+        opacity: 0.4,
       })
         .bindPopup(`<div class="cp-popup">
           <div class="popup-hdr" style="background:#6B7280">

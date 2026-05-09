@@ -1349,23 +1349,24 @@ function renderInsights(records, unique) {
     </div>`;
   }
 
-  // 1b. Common CPs details
+  // 1b. Common CPs details — intentional inter-PMA support, shown as informational
   if (communN > 0) {
     const communSample = unique.filter(r => r.category === 'commun').slice(0, 5).map(r => {
       const pmas = [...new Set((flowsByCP[r.cp]||[]).map(x => x.flow.pma))];
       return `<code style="background:white;padding:1px 5px;border-radius:3px;border:1px solid var(--line);font-family:monospace;font-size:10px">${r.cp}</code> ${pmas.map(p=>`<span style="color:${PMA_COLORS[p]};font-weight:700">${p}</span>`).join(' + ')}`;
     }).join('<br>');
     ins.innerHTML += `<div class="insight-card" style="border-color:${CP_CATEGORY_COLORS.commun}44">
-      <div class="insight-title"><div class="insight-icon" style="background:#FEF3C7">⚠️</div>${communN} CP présents dans plusieurs plans PMA</div>
+      <div class="insight-title"><div class="insight-icon" style="background:#FEF9C3">🔗</div>${communN} CP en support inter-PMA (commun)</div>
       ${communSample}${communN > 5 ? `<br><span style="color:var(--ink-3)">…et ${communN-5} autres</span>` : ''}
-      <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Affectation à clarifier pour éviter les tournées redondantes.</div>
+      <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Ces CPs sont <b>intentionnellement partagés</b> entre PMAs pour assurer le support mutuel entre unités.</div>
     </div>`;
   }
 
-  // 2. Mis-routed CPs
+  // 2. Distance-suboptimal CPs — only for propre CPs (skip croisé/commun which are intentional)
   const stores = Object.values(M.stores);
   const misrouted = [];
   for (const r of unique) {
+    if (r.category === 'croise' || r.category === 'commun') continue; // intentional cross-PMA, skip
     let best = r.store, bestD = r.dist;
     for (const s of stores) {
       if (s.code === r.store.code) continue;
@@ -1381,9 +1382,9 @@ function renderInsights(records, unique) {
       `<code style="font-family:monospace;font-size:10px">${m.cp}</code> <span style="color:var(--ink-3)">${m.store.pma}</span> → <b>${m.bestStore.pma}</b> · +${Math.round(m.gain)} km gagné`
     ).join('<br>');
     ins.innerHTML += `<div class="insight-card">
-      <div class="insight-title"><div class="insight-icon" style="background:#FEE2E2">🔀</div>${misrouted.length} CP plus proches d'un autre magasin</div>
+      <div class="insight-title"><div class="insight-icon" style="background:#FEE2E2">🔀</div>${misrouted.length} CP propres plus proches d'un autre magasin</div>
       ${top}${misrouted.length>4?`<br><span style="color:var(--ink-3)">…et ${misrouted.length-4} autres</span>`:''}
-      <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Gain potentiel : <b>${Math.round(totalGain)} km</b> / tournée.</div>
+      <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Gain potentiel : <b>${Math.round(totalGain)} km</b> / tournée. (CPs croisés/communs exclus — support inter-PMA intentionnel.)</div>
     </div>`;
   }
 
@@ -1509,6 +1510,75 @@ function renderInsights(records, unique) {
         <div class="insight-title"><div class="insight-icon" style="background:#E0F2FE">🗺️</div>Clusters départementaux à optimiser</div>
         ${rows}
         <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Départements où un autre magasin est en moyenne plus proche. Activez le scénario pour simuler.</div>
+      </div>`;
+    }
+  }
+
+  // 7. CP Dynamism — a CP is "dynamic" if it has BOTH a CCD flux AND an LCDD flux (in any PMA)
+  {
+    const onlyCCD = [];
+    const onlyLCDD = [];
+    const dynamicCount = { total: 0 };
+    const seenCPs = new Set();
+    for (const r of unique) {
+      if (seenCPs.has(r.cp)) continue;
+      seenCPs.add(r.cp);
+      const flows = flowsByCP[r.cp] || [];
+      const fluxTypes = new Set(flows.map(f => f.flow.flux));
+      const hasCCD = fluxTypes.has('CCD');
+      const hasLCDD = fluxTypes.has('LCDD');
+      if (hasCCD && hasLCDD) {
+        dynamicCount.total++;
+      } else if (hasCCD && !hasLCDD) {
+        onlyCCD.push(r);
+      } else if (hasLCDD && !hasCCD) {
+        onlyLCDD.push(r);
+      }
+    }
+    const nonDynamic = onlyCCD.length + onlyLCDD.length;
+    const total = dynamicCount.total + nonDynamic;
+    if (total > 0) {
+      const pctDyn = total > 0 ? Math.round(dynamicCount.total / total * 100) : 0;
+      const colorDyn = pctDyn >= 80 ? '#0A8754' : pctDyn >= 50 ? '#F59E0B' : '#E04E2C';
+      // Group non-dynamic by PMA
+      const byPMA = {};
+      for (const r of [...onlyCCD, ...onlyLCDD]) {
+        const pma = r.flow?.pma || 'Inconnu';
+        if (!byPMA[pma]) byPMA[pma] = { ccd: [], lcdd: [] };
+        const flows = flowsByCP[r.cp] || [];
+        const fluxTypes = new Set(flows.map(f => f.flow.flux));
+        if (fluxTypes.has('CCD') && !fluxTypes.has('LCDD')) byPMA[pma].ccd.push(r.cp);
+        else if (!fluxTypes.has('CCD') && fluxTypes.has('LCDD')) byPMA[pma].lcdd.push(r.cp);
+      }
+      const pmaRows = Object.entries(byPMA).map(([pma, d]) => {
+        const col = PMA_COLORS[pma] || '#888';
+        const parts = [];
+        if (d.ccd.length) parts.push(`<span style="color:#E04E2C;font-weight:700">${d.ccd.length} sans LCDD</span>`);
+        if (d.lcdd.length) parts.push(`<span style="color:#0058A3;font-weight:700">${d.lcdd.length} sans CCD</span>`);
+        const sample = [...d.ccd.slice(0,3), ...d.lcdd.slice(0,3)].map(cp =>
+          `<code style="font-family:monospace;font-size:10px;background:white;padding:1px 4px;border-radius:3px;border:1px solid var(--line)">${cp}</code>`
+        ).join(' ');
+        return `<div style="padding:5px 8px;border-radius:7px;background:var(--bg);margin-bottom:4px;font-size:10px">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${col};margin-right:4px"></span>
+          <b style="color:${col}">${pma}</b> : ${parts.join(' · ')}
+          <div style="margin-top:3px;color:var(--ink-3)">${sample}${(d.ccd.length+d.lcdd.length)>6?` …et ${d.ccd.length+d.lcdd.length-6} autres`:''}</div>
+        </div>`;
+      }).join('');
+      ins.innerHTML += `<div class="insight-card" style="border-color:${colorDyn}44">
+        <div class="insight-title"><div class="insight-icon" style="background:#F0FDF4">⚡</div>Dynamisme des CPs — CCD + LCDD</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          <div style="text-align:center">
+            <div style="font-size:22px;font-weight:800;color:${colorDyn}">${pctDyn}%</div>
+            <div style="font-size:10px;color:var(--ink-3)">CPs dynamiques</div>
+          </div>
+          <div style="font-size:10px;color:var(--ink-3);flex:1">
+            <b style="color:var(--ink)">${dynamicCount.total}</b> CP ont CCD + LCDD (dynamiques)<br>
+            <b style="color:#E04E2C">${onlyCCD.length}</b> CP ont uniquement CCD (manque LCDD)<br>
+            <b style="color:#0058A3">${onlyLCDD.length}</b> CP ont uniquement LCDD (manque CCD)
+          </div>
+        </div>
+        ${nonDynamic > 0 ? pmaRows : '<div style="font-size:10px;color:#0A8754;font-weight:600">✓ Tous les CPs sont dynamiques !</div>'}
+        ${nonDynamic > 0 ? `<div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Objectif : chaque CP doit avoir <b>un flux CCD et un flux LCDD</b> pour être considéré dynamique.</div>` : ''}
       </div>`;
     }
   }

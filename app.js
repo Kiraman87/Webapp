@@ -1555,13 +1555,29 @@ function renderInsights(records, unique) {
         const parts = [];
         if (d.ccd.length) parts.push(`<span style="color:#E04E2C;font-weight:700">${d.ccd.length} sans LCDD</span>`);
         if (d.lcdd.length) parts.push(`<span style="color:#0058A3;font-weight:700">${d.lcdd.length} sans CCD</span>`);
-        const sample = [...d.ccd.slice(0,3), ...d.lcdd.slice(0,3)].map(cp =>
-          `<code style="font-family:monospace;font-size:10px;background:white;padding:1px 4px;border-radius:3px;border:1px solid var(--line)">${cp}</code>`
-        ).join(' ');
+        const uid = `dyn-${pma.replace(/\s/g,'')}`;
+        const allCPs = [
+          ...d.ccd.map(cp => ({ cp, missing: 'LCDD', color: '#E04E2C' })),
+          ...d.lcdd.map(cp => ({ cp, missing: 'CCD',  color: '#0058A3' })),
+        ];
+        const fullList = allCPs.map(({ cp, missing, color }) =>
+          `<span style="display:inline-flex;align-items:center;gap:3px;margin:2px">
+            <code style="font-family:monospace;font-size:10px;background:white;padding:1px 4px;border-radius:3px;border:1px solid var(--line)">${cp}</code>
+            <span style="font-size:9px;color:${color};font-weight:700">−${missing}</span>
+          </span>`
+        ).join('');
         return `<div style="padding:5px 8px;border-radius:7px;background:var(--bg);margin-bottom:4px;font-size:10px">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${col};margin-right:4px"></span>
-          <b style="color:${col}">${pma}</b> : ${parts.join(' · ')}
-          <div style="margin-top:3px;color:var(--ink-3)">${sample}${(d.ccd.length+d.lcdd.length)>6?` …et ${d.ccd.length+d.lcdd.length-6} autres`:''}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${col};margin-right:4px"></span>
+              <b style="color:${col}">${pma}</b> : ${parts.join(' · ')}
+            </div>
+            <button onclick="(function(el){el.style.display=el.style.display==='none'?'block':'none'})(document.getElementById('${uid}'))"
+              style="font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid var(--line);background:white;cursor:pointer;font-family:inherit;color:var(--ink-2);white-space:nowrap">
+              Voir tous (${allCPs.length})
+            </button>
+          </div>
+          <div id="${uid}" style="display:none;margin-top:6px;max-height:180px;overflow-y:auto;line-height:1.8">${fullList}</div>
         </div>`;
       }).join('');
       ins.innerHTML += `<div class="insight-card" style="border-color:${colorDyn}44">

@@ -500,10 +500,19 @@ function pmaZoneColor(pma, zone) {
   return hslToHex(h, Math.max(s, 55), l);
 }
 
+// TA source level → lightness (PRIO darkest, TA7 lightest)
+const TA_SOURCE_LIGHTNESS = { 'PRIO':25, 'TA0':32, 'TA1':39, 'TA2':46, 'TA3':53, 'TA4':60, 'TA5':65, 'TA6':70, 'TA7':75 };
+function pmaSourceTAColor(pma, taName) {
+  const base = PMA_COLORS[pma] || '#888888';
+  const [h, s] = hexToHSL(base);
+  const l = TA_SOURCE_LIGHTNESS[taName] ?? 50;
+  return hslToHex(h, Math.max(s, 55), l);
+}
+
 function colorFor(r) {
   const u = state.unit;
   const multi = state.selectedPMAs.size > 1;
-  if (u === 'ta-source') return sourceTAColor(r.sourceTA);
+  if (u === 'ta-source') return multi ? pmaSourceTAColor(r.flow.pma, r.sourceTA) : sourceTAColor(r.sourceTA);
   if (u === 'cp' || u === 'zone') {
     return multi ? pmaZoneColor(r.flow.pma, r.timeZone) : (ZONE_COLORS[r.timeZone] || '#999');
   }
@@ -1222,13 +1231,32 @@ function renderLegend() {
   legend.style.left = `calc(${lOff} + 12px)`;
 
   if (u === 'ta-source') {
-    title.textContent = 'TA source (plan)';
-    const visible = uniqueSourceTAs(buildRecords());
-    items.innerHTML = visible.map(t =>
-      `<div class="legend-item"><div class="legend-sw" style="background:${sourceTAColor(t)}"></div><span>${t}</span></div>`
-    ).join('') + `<div style="height:1px;background:var(--line);margin:6px 0"></div>
-      <div class="legend-item"><div style="width:16px;height:10px;border-radius:3px;background:${CP_CATEGORY_COLORS.croise};opacity:.5;border:2px dashed ${CP_CATEGORY_COLORS.croise}"></div><span style="color:var(--ink-2)">Croisé (bord violet)</span></div>
-      <div class="legend-item"><div style="width:16px;height:10px;border-radius:3px;background:${CP_CATEGORY_COLORS.commun};opacity:.5;border:2px solid ${CP_CATEGORY_COLORS.commun}"></div><span style="color:var(--ink-2)">Commun (bord ambre)</span></div>`;
+    const multi = state.selectedPMAs.size > 1;
+    title.textContent = multi ? 'PMA × TA source' : 'TA source (plan)';
+    if (multi) {
+      const activePMAs = [...state.selectedPMAs];
+      const taLevels = ['PRIO','TA0','TA1','TA2','TA3','TA4','TA5','TA6','TA7'];
+      const visible = uniqueSourceTAs(buildRecords());
+      const visibleTA = taLevels.filter(t => visible.includes(t));
+      const colCount = visibleTA.length;
+      const header = `<div style="display:grid;grid-template-columns:62px repeat(${colCount},1fr);gap:2px;margin-bottom:4px;font-size:8px;color:var(--ink-3);font-weight:600">
+        <span></span>${visibleTA.map(t=>`<span style="text-align:center">${t}</span>`).join('')}
+      </div>`;
+      const rows = activePMAs.map(pma =>
+        `<div style="display:grid;grid-template-columns:62px repeat(${colCount},1fr);gap:2px;align-items:center;margin-bottom:3px">
+          <span style="font-size:9px;font-weight:700;color:${PMA_COLORS[pma]};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${pma}</span>
+          ${visibleTA.map(t=>`<div style="height:12px;border-radius:2px;background:${pmaSourceTAColor(pma,t)}"></div>`).join('')}
+        </div>`
+      ).join('');
+      items.innerHTML = header + rows;
+    } else {
+      const visible = uniqueSourceTAs(buildRecords());
+      items.innerHTML = visible.map(t =>
+        `<div class="legend-item"><div class="legend-sw" style="background:${sourceTAColor(t)}"></div><span>${t}</span></div>`
+      ).join('') + `<div style="height:1px;background:var(--line);margin:6px 0"></div>
+        <div class="legend-item"><div style="width:16px;height:10px;border-radius:3px;background:${CP_CATEGORY_COLORS.croise};opacity:.5;border:2px dashed ${CP_CATEGORY_COLORS.croise}"></div><span style="color:var(--ink-2)">Croisé (bord violet)</span></div>
+        <div class="legend-item"><div style="width:16px;height:10px;border-radius:3px;background:${CP_CATEGORY_COLORS.commun};opacity:.5;border:2px solid ${CP_CATEGORY_COLORS.commun}"></div><span style="color:var(--ink-2)">Commun (bord ambre)</span></div>`;
+    }
   } else if (u === 'category') {
     title.textContent = 'Affectation CP';
     items.innerHTML = `

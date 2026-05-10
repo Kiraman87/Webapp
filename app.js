@@ -467,15 +467,52 @@ function computeScales(records) {
   timeMax = Math.max(...records.map(r=>r.time));
 }
 
+// HSL helpers for per-PMA zone shading
+function hexToHSL(hex) {
+  let r = parseInt(hex.slice(1,3),16)/255;
+  let g = parseInt(hex.slice(3,5),16)/255;
+  let b = parseInt(hex.slice(5,7),16)/255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h = 0, s = 0, l = (max+min)/2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+    switch(max) {
+      case r: h = ((g-b)/d + (g<b?6:0))/6; break;
+      case g: h = ((b-r)/d + 2)/6; break;
+      case b: h = ((r-g)/d + 4)/6; break;
+    }
+  }
+  return [Math.round(h*360), Math.round(s*100), Math.round(l*100)];
+}
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1-l);
+  const f = n => { const k=(n+h/30)%12; const c=l-a*Math.max(Math.min(k-3,9-k,1),-1); return Math.round(255*c).toString(16).padStart(2,'0'); };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+// zone 1=dark (near), 2=medium, 3=light (far)
+const ZONE_LIGHTNESS = { '1': 30, '2': 50, '3': 68 };
+function pmaZoneColor(pma, zone) {
+  const base = PMA_COLORS[pma] || '#888888';
+  const [h, s] = hexToHSL(base);
+  const l = ZONE_LIGHTNESS[zone] || 50;
+  return hslToHex(h, Math.max(s, 55), l);
+}
+
 function colorFor(r) {
   const u = state.unit;
+  const multi = state.selectedPMAs.size > 1;
   if (u === 'ta-source') return sourceTAColor(r.sourceTA);
-  if (u === 'cp' || u === 'zone') return ZONE_COLORS[r.timeZone] || '#999';
+  if (u === 'cp' || u === 'zone') {
+    return multi ? pmaZoneColor(r.flow.pma, r.timeZone) : (ZONE_COLORS[r.timeZone] || '#999');
+  }
   if (u === 'category')   return CP_CATEGORY_COLORS[r.category] || '#6B7280';
   if (u === 'population') return scale(r.population, popMin, popMax, ['#C7E9F8','#0EA5E9','#0C4A6E']);
   if (u === 'distance')   return scale(r.dist, distMin, distMax, ['#059669','#FFDB00','#DC2626']);
   if (u === 'time')       return scale(r.time, timeMin, timeMax, ['#059669','#FFDB00','#DC2626']);
-  return PMA_COLORS[r.flow.pma] || '#0058A3';
+  // Default: multi-PMA → PMA hue + zone lightness; single PMA → flat PMA color
+  return multi ? pmaZoneColor(r.flow.pma, r.timeZone) : (PMA_COLORS[r.flow.pma] || '#0058A3');
 }
 
 function scale(v, mn, mx, palette) {
@@ -1202,13 +1239,36 @@ function renderLegend() {
       </div>
       <div class="legend-item"><div class="legend-sw" style="background:${CP_CATEGORY_COLORS.commun}"></div><span>Commun — multi-PMA</span></div>`;
   } else if (u === 'cp' || u === 'zone') {
-    title.textContent = 'Zone temps (calculée)';
-    items.innerHTML = `
-      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['1']}"></div><span>Z1 · ≤ 45 min</span></div>
-      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['2']}"></div><span>Z2 · 45–60 min</span></div>
-      <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['3']}"></div><span>Z3 · 60–110 min</span></div>
-      <div style="height:1px;background:var(--line);margin:6px 0"></div>
-      <div class="legend-item"><div class="legend-sw" style="background:#FFDB00;border:1px solid #ccc"></div><span style="color:var(--ink-2)">Doublon inter-PMAs</span></div>`;
+    const multi = state.selectedPMAs.size > 1;
+    title.textContent = multi ? 'PMA × Zone temps' : 'Zone temps (calculée)';
+    if (multi) {
+      const zoneLabels = { '1': '≤45 min', '2': '45–60 min', '3': '60–110 min' };
+      const activePMAs = [...state.selectedPMAs];
+      const header = `<div style="display:grid;grid-template-columns:60px repeat(3,1fr);gap:3px;margin-bottom:4px;font-size:9px;color:var(--ink-3);font-weight:600">
+        <span></span><span style="text-align:center">Z1</span><span style="text-align:center">Z2</span><span style="text-align:center">Z3</span>
+      </div>`;
+      const rows = activePMAs.map(pma => {
+        const swatches = ['1','2','3'].map(z =>
+          `<div style="width:100%;height:14px;border-radius:3px;background:${pmaZoneColor(pma,z)}"></div>`
+        ).join('');
+        return `<div style="display:grid;grid-template-columns:60px repeat(3,1fr);gap:3px;align-items:center;margin-bottom:3px">
+          <span style="font-size:9px;font-weight:700;color:${PMA_COLORS[pma]};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pma}</span>
+          ${swatches}
+        </div>`;
+      }).join('');
+      const zLabels = `<div style="display:grid;grid-template-columns:60px repeat(3,1fr);gap:3px;margin-top:2px;font-size:8px;color:var(--ink-3)">
+        <span></span>
+        ${['≤45 min','45–60 min','60–110 min'].map(l=>`<span style="text-align:center;line-height:1.2">${l}</span>`).join('')}
+      </div>`;
+      items.innerHTML = header + rows + zLabels;
+    } else {
+      items.innerHTML = `
+        <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['1']}"></div><span>Z1 · ≤ 45 min</span></div>
+        <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['2']}"></div><span>Z2 · 45–60 min</span></div>
+        <div class="legend-item"><div class="legend-sw" style="background:${ZONE_COLORS['3']}"></div><span>Z3 · 60–110 min</span></div>
+        <div style="height:1px;background:var(--line);margin:6px 0"></div>
+        <div class="legend-item"><div class="legend-sw" style="background:#FFDB00;border:1px solid #ccc"></div><span style="color:var(--ink-2)">Doublon inter-PMAs</span></div>`;
+    }
   } else if (u === 'population') {
     title.textContent = 'Population';
     items.innerHTML = gradLegend(['#C7E9F8','#0EA5E9','#0C4A6E'], ['Faible','Moyenne','Élevée']);
@@ -1218,6 +1278,31 @@ function renderLegend() {
   } else if (u === 'time') {
     title.textContent = 'Temps trajet';
     items.innerHTML = gradLegend(['#059669','#FFDB00','#DC2626'], ['Rapide','Moyen','Long']);
+  } else {
+    // Default: single PMA = flat color; multi-PMA = PMA × zone grid
+    const multi = state.selectedPMAs.size > 1;
+    if (multi) {
+      title.textContent = 'PMA × Zone temps';
+      const activePMAs = [...state.selectedPMAs];
+      const header = `<div style="display:grid;grid-template-columns:70px repeat(3,1fr);gap:3px;margin-bottom:4px;font-size:9px;color:var(--ink-3);font-weight:600">
+        <span></span><span style="text-align:center">Z1 ≤45'</span><span style="text-align:center">Z2 ≤60'</span><span style="text-align:center">Z3 +60'</span>
+      </div>`;
+      const rows = activePMAs.map(pma => {
+        const swatches = ['1','2','3'].map(z =>
+          `<div style="width:100%;height:14px;border-radius:3px;background:${pmaZoneColor(pma,z)}"></div>`
+        ).join('');
+        return `<div style="display:grid;grid-template-columns:70px repeat(3,1fr);gap:3px;align-items:center;margin-bottom:3px">
+          <span style="font-size:9px;font-weight:700;color:${PMA_COLORS[pma]};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${pma}</span>
+          ${swatches}
+        </div>`;
+      }).join('');
+      items.innerHTML = header + rows;
+    } else {
+      title.textContent = 'PMA';
+      items.innerHTML = [...state.selectedPMAs].map(pma =>
+        `<div class="legend-item"><div class="legend-sw" style="background:${PMA_COLORS[pma]}"></div><span>${pma}</span></div>`
+      ).join('');
+    }
   }
 }
 

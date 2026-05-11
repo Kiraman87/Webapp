@@ -2063,7 +2063,7 @@ function exportOptimisationXLSX() {
   }).filter(d=>d.gain>8).sort((a,b)=>b.pop-a.pop).slice(0,20);
   recapRows.push(['Clusters départementaux à optimiser', clusters.length + ' départements', clusters.reduce((a,c)=>a+c.gain,0).toFixed(0)+' km moy.', 'Groupes géographiques homogènes']);
 
-  // dynamism
+  // dynamism — analyst-only
   const nonDynList = [];
   const seenCPs2 = new Set();
   let dynCount = 0;
@@ -2073,8 +2073,10 @@ function exportOptimisationXLSX() {
     if (fluxTypes.has('CCD')&&fluxTypes.has('LCDD')) { dynCount++; continue; }
     nonDynList.push({ r, hasCCD:fluxTypes.has('CCD'), hasLCDD:fluxTypes.has('LCDD'), fluxTypes });
   }
-  const pctDyn = seenCPs2.size ? Math.round(dynCount/seenCPs2.size*100) : 0;
-  recapRows.push(['CPs non-dynamiques (manque CCD ou LCDD)', nonDynList.length + ' CP', pctDyn + '% dynamiques', 'Objectif : 100% CPs avec CCD+LCDD']);
+  if (ANALYST_MODE) {
+    const pctDyn = seenCPs2.size ? Math.round(dynCount/seenCPs2.size*100) : 0;
+    recapRows.push(['CPs non-dynamiques (manque CCD ou LCDD)', nonDynList.length + ' CP', pctDyn + '% dynamiques', 'Objectif : 100% CPs avec CCD+LCDD']);
+  }
 
   recapRows.push([]); // spacer
   recapRows.push(['Exporté le', ts, '', '']);
@@ -2178,24 +2180,26 @@ function exportOptimisationXLSX() {
     });
   XLSX.utils.book_append_sheet(wb, ws6, '🗺️ Clusters dép.');
 
-  // ── Sheet 7: CPs non-dynamiques ──────────────────────────────
-  const dynHdr = ['Code Postal','Commune','Département','PMA','Flux existants','Flux manquant','Population','Distance (km)'];
-  const dynRows = nonDynList.sort((a,b)=>a.r.flow?.pma?.localeCompare(b.r.flow?.pma)||a.r.cp.localeCompare(b.r.cp)).map(({r,hasCCD,hasLCDD}) => [
-    r.cp, r.name||'', r.cp.slice(0,2), r.flow?.pma||'',
-    hasCCD&&!hasLCDD?'CCD':!hasCCD&&hasLCDD?'LCDD':'—',
-    !hasCCD?'CCD':'LCDD', r.population, Math.round(r.dist)
-  ]);
-  const dynData = [dynHdr, ...dynRows];
-  const ws7 = styleSheet(XLSX.utils.aoa_to_sheet(dynData), dynHdr, dynRows, [12,22,13,18,14,14,12,14],
-    (i,c,cell,bg) => {
-      if (c===3) return pmaStyle(bg, dynRows[i][3]);
-      if (c===5) {
-        const missing = dynRows[i][5];
-        return { fill:{fgColor:{rgb:bg}}, font:{bold:true, color:{rgb:missing==='CCD'?'FFB91C1C':'FF1D4ED8'}}, alignment:{horizontal:'center'} };
-      }
-      return { fill:{fgColor:{rgb:bg}}, alignment:{horizontal:c<2?'left':'center'} };
-    });
-  XLSX.utils.book_append_sheet(wb, ws7, '⚡ CPs non-dynamiques');
+  // ── Sheet 7: CPs non-dynamiques — analyst-only ───────────────
+  if (ANALYST_MODE) {
+    const dynHdr = ['Code Postal','Commune','Département','PMA','Flux existants','Flux manquant','Population','Distance (km)'];
+    const dynRows = nonDynList.sort((a,b)=>a.r.flow?.pma?.localeCompare(b.r.flow?.pma)||a.r.cp.localeCompare(b.r.cp)).map(({r,hasCCD,hasLCDD}) => [
+      r.cp, r.name||'', r.cp.slice(0,2), r.flow?.pma||'',
+      hasCCD&&!hasLCDD?'CCD':!hasCCD&&hasLCDD?'LCDD':'—',
+      !hasCCD?'CCD':'LCDD', r.population, Math.round(r.dist)
+    ]);
+    const dynData = [dynHdr, ...dynRows];
+    const ws7 = styleSheet(XLSX.utils.aoa_to_sheet(dynData), dynHdr, dynRows, [12,22,13,18,14,14,12,14],
+      (i,c,cell,bg) => {
+        if (c===3) return pmaStyle(bg, dynRows[i][3]);
+        if (c===5) {
+          const missing = dynRows[i][5];
+          return { fill:{fgColor:{rgb:bg}}, font:{bold:true, color:{rgb:missing==='CCD'?'FFB91C1C':'FF1D4ED8'}}, alignment:{horizontal:'center'} };
+        }
+        return { fill:{fgColor:{rgb:bg}}, alignment:{horizontal:c<2?'left':'center'} };
+      });
+    XLSX.utils.book_append_sheet(wb, ws7, '⚡ CPs non-dynamiques');
+  }
 
   XLSX.writeFile(wb, `PMA-optimisation-${ts}.xlsx`);
 }

@@ -1707,7 +1707,13 @@ function renderInsights(records, unique) {
           </div>
         </div>
         ${nonDynamic > 0 ? pmaRows : '<div style="font-size:10px;color:#0A8754;font-weight:600">✓ Tous les CPs sont dynamiques !</div>'}
-        ${nonDynamic > 0 ? `<div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Objectif : chaque CP doit avoir <b>un flux CCD et un flux LCDD</b> pour être considéré dynamique.</div>` : ''}
+        ${nonDynamic > 0 ? `
+        <div style="margin-top:9px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+          <span style="font-size:10px;color:var(--ink-3)">Objectif : chaque CP doit avoir <b>un flux CCD et un flux LCDD</b>.</span>
+          <button onclick="exportDynamismXLSX()" style="display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:7px;font-size:10px;font-weight:700;border:1.5px solid #0A8754;background:white;color:#0A8754;cursor:pointer;font-family:inherit;white-space:nowrap">
+            📥 Exporter Excel (${nonDynamic} CP)
+          </button>
+        </div>` : ''}
       </div>`;
     }
   }
@@ -1920,6 +1926,112 @@ function setupSearch() {
 }
 
 // ============================================================
+// Non-dynamic CPs Excel export
+// ============================================================
+function exportDynamismXLSX() {
+  if (typeof XLSX === 'undefined') { alert('Bibliothèque XLSX non chargée'); return; }
+
+  // Build the non-dynamic CP list (same logic as renderInsights)
+  const records = buildRecords();
+  const unique = dedupe(records);
+  const rows = [];
+  const seenCPs = new Set();
+  for (const r of unique) {
+    if (seenCPs.has(r.cp)) continue;
+    seenCPs.add(r.cp);
+    const flows = flowsByCP[r.cp] || [];
+    const fluxTypes = new Set(flows.map(f => f.flow.flux));
+    const hasCCD = fluxTypes.has('CCD');
+    const hasLCDD = fluxTypes.has('LCDD');
+    if (hasCCD && hasLCDD) continue; // dynamic — skip
+    const pma = r.flow?.pma || '';
+    rows.push({
+      cp: r.cp,
+      commune: r.name || '',
+      departement: r.cp.slice(0, 2),
+      pma,
+      flux_existants: [...fluxTypes].join(', '),
+      flux_manquant: !hasCCD ? 'CCD' : 'LCDD',
+      population: r.population || 0,
+      distance_km: Math.round(r.dist),
+    });
+  }
+
+  // Sort: PMA then CP
+  rows.sort((a, b) => a.pma.localeCompare(b.pma) || a.cp.localeCompare(b.cp));
+
+  // PMA color map (ARGB for SheetJS fill)
+  const PMA_ARGB = {
+    'Lyon': 'FF0058A3',
+    'Saint-Étienne': 'FFE04E2C',
+    'Grenoble': 'FF0A8754',
+    'Clermont': 'FFBE185D',
+  };
+
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: non-dynamic CPs ──
+  const headers = ['Code Postal','Commune','Département','PMA','Flux existants','Flux manquant','Population','Distance (km)'];
+  const wsData = [headers, ...rows.map(r => [r.cp, r.commune, r.departement, r.pma, r.flux_existants, r.flux_manquant, r.population, r.distance_km])];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Column widths
+  ws['!cols'] = [{ wch:12 },{ wch:22 },{ wch:13 },{ wch:16 },{ wch:16 },{ wch:14 },{ wch:12 },{ wch:14 }];
+
+  // Style header row
+  const headerStyle = { font: { bold: true, color: { rgb: 'FFFFFFFF' } }, fill: { fgColor: { rgb: 'FF003E7E' } }, alignment: { horizontal: 'center' } };
+  for (let c = 0; c < headers.length; c++) {
+    const cell = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws[cell]) ws[cell].s = headerStyle;
+  }
+
+  // Style data rows: alternate white/light-gray + PMA color in PMA column
+  rows.forEach((row, i) => {
+    const ri = i + 1;
+    const base = i % 2 === 0 ? 'FFFAFAFA' : 'FFFFFFFF';
+    for (let c = 0; c < headers.length; c++) {
+      const cell = XLSX.utils.encode_cell({ r: ri, c });
+      if (!ws[cell]) continue;
+      ws[cell].s = { fill: { fgColor: { rgb: base } }, alignment: { horizontal: c < 2 ? 'left' : 'center' } };
+    }
+    // PMA column (col 3): colored background
+    const pmaCell = XLSX.utils.encode_cell({ r: ri, c: 3 });
+    if (ws[pmaCell]) ws[pmaCell].s = { fill: { fgColor: { rgb: PMA_ARGB[row.pma] || 'FF888888' } }, font: { bold: true, color: { rgb: 'FFFFFFFF' } }, alignment: { horizontal: 'center' } };
+    // Flux manquant column (col 5): red text
+    const fmCell = XLSX.utils.encode_cell({ r: ri, c: 5 });
+    if (ws[fmCell]) ws[fmCell].s = { font: { bold: true, color: { rgb: row.flux_manquant === 'CCD' ? 'FFB91C1C' : 'FF1D4ED8' } }, fill: { fgColor: { rgb: base } }, alignment: { horizontal: 'center' } };
+  });
+
+  XLSX.utils.book_append_sheet(wb, ws, 'CPs non-dynamiques');
+
+  // ── Sheet 2: summary by PMA ──
+  const byPMA = {};
+  for (const r of rows) {
+    if (!byPMA[r.pma]) byPMA[r.pma] = { total: 0, sansCCD: 0, sansLCDD: 0, pop: 0 };
+    byPMA[r.pma].total++;
+    if (r.flux_manquant === 'CCD') byPMA[r.pma].sansCCD++;
+    else byPMA[r.pma].sansLCDD++;
+    byPMA[r.pma].pop += r.population;
+  }
+  const totalDyn = unique.length - rows.length;
+  const pctDyn = unique.length ? Math.round(totalDyn / unique.length * 100) : 0;
+  const sumHeaders = ['PMA','CPs non-dynamiques','Sans CCD','Sans LCDD','Population concernée'];
+  const sumData = [sumHeaders, ...Object.entries(byPMA).map(([pma, d]) => [pma, d.total, d.sansCCD, d.sansLCDD, d.pop])];
+  sumData.push([]);
+  sumData.push(['Total CPs','', '', '', rows.reduce((a,r)=>a+r.population,0)]);
+  sumData.push(['Score dynamisme', `${pctDyn}%`, '', '', '']);
+  const ws2 = XLSX.utils.aoa_to_sheet(sumData);
+  ws2['!cols'] = [{ wch:18 },{ wch:22 },{ wch:12 },{ wch:12 },{ wch:20 }];
+  for (let c = 0; c < sumHeaders.length; c++) {
+    const cell = XLSX.utils.encode_cell({ r: 0, c });
+    if (ws2[cell]) ws2[cell].s = headerStyle;
+  }
+  XLSX.utils.book_append_sheet(wb, ws2, 'Résumé par PMA');
+
+  const ts = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `CPs-non-dynamiques-${ts}.xlsx`);
+}
+
 // CSV export
 // ============================================================
 function exportCSV() {

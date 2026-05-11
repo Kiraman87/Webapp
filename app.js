@@ -90,6 +90,8 @@ function sourceTASortKey(name) {
 // ============================================================
 // State
 // ============================================================
+const ANALYST_MODE = new URLSearchParams(location.search).get('analyst') === '1';
+
 let state = {
   selectedPMAs:      new Set(['Lyon']),
   enabledFlowIds:    new Set(M.flows.map(f => f._id)),
@@ -1422,12 +1424,14 @@ function renderInsights(records, unique) {
   const ins = document.getElementById('insights');
   ins.innerHTML = '';
 
-  // Global export button — always shown at top
-  ins.innerHTML += `<div style="display:flex;justify-content:flex-end;margin-bottom:8px">
-    <button onclick="exportOptimisationXLSX()" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:11px;font-weight:700;border:1.5px solid #0A8754;background:white;color:#0A8754;cursor:pointer;font-family:inherit;box-shadow:0 1px 4px #0001">
-      📥 Exporter toutes les pistes (Excel)
-    </button>
-  </div>`;
+  // Global export button — analyst-only
+  if (ANALYST_MODE) {
+    ins.innerHTML += `<div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <button onclick="exportOptimisationXLSX()" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:11px;font-weight:700;border:1.5px solid #0A8754;background:white;color:#0A8754;cursor:pointer;font-family:inherit;box-shadow:0 1px 4px #0001">
+        📥 Exporter toutes les pistes (Excel)
+      </button>
+    </div>`;
+  }
 
   // 1. Inter-PMA cooperation matrix (from ALL flowsByCP, not filtered)
   const coopMap = {};
@@ -1634,8 +1638,8 @@ function renderInsights(records, unique) {
     }
   }
 
-  // 7. CP Dynamism — a CP is "dynamic" if it has BOTH a CCD flux AND an LCDD flux (in any PMA)
-  {
+  // 7. CP Dynamism — analyst-only, visible only when URL contains ?analyst=1
+  if (ANALYST_MODE) {
     const onlyCCD = [];
     const onlyLCDD = [];
     const dynamicCount = { total: 0 };

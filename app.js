@@ -113,6 +113,7 @@ let state = {
   speedKmh:          65,
   showLogistics:     true,
   showOptimalOverlay: false,
+  highlightCPs: new Set(),   // CPs highlighted from insight cards (shown with pin on map)
   scenario: {
     active: false,
     name: 'Scénario 1',
@@ -331,6 +332,37 @@ function shareScenario() {
 }
 function toggleOptimalOverlay() { state.showOptimalOverlay = !state.showOptimalOverlay; renderAll(); }
 
+// Toast notification
+function showToast(msg, color = '#0A8754') {
+  let t = document.getElementById('app-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'app-toast';
+    t.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 18px;border-radius:10px;font-size:12px;font-weight:700;color:white;box-shadow:0 4px 16px #0003;transition:opacity .3s;pointer-events:none';
+    document.body.appendChild(t);
+  }
+  t.style.background = color;
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._to);
+  t._to = setTimeout(() => { t.style.opacity = '0'; }, 2500);
+}
+
+// Highlight CPs from insight card on the map
+function highlightOnMap(cpArray, label) {
+  state.highlightCPs = new Set(cpArray);
+  renderAll();
+  // Fly to centroid of highlighted CPs
+  const pts = cpArray.map(cp => cpData[cp]).filter(Boolean);
+  if (pts.length) {
+    const lat = pts.reduce((a, d) => a + d.lat, 0) / pts.length;
+    const lng = pts.reduce((a, d) => a + d.lng, 0) / pts.length;
+    map.flyTo([lat, lng], Math.max(map.getZoom(), 8), { duration: .8 });
+  }
+  showToast(`📍 ${cpArray.length} CP mis en évidence — ${label}`, '#6D28D9');
+}
+function clearHighlight() { state.highlightCPs = new Set(); renderAll(); }
+
 function exportScenario() {
   const data = {
     name: state.scenario.name,
@@ -355,7 +387,7 @@ function quickLoadLyonSupport431() {
       zone.cps.forEach(cp => { state.scenario.assignments[String(cp).trim().padStart(5,'0')] = '562'; });
     }
   }
-  state.scenario.active = true; renderAll();
+  state.scenario.active = true; renderAll(); showToast("✓ Scénario chargé — CPs en violet sur la carte", "#6D28D9");
 }
 
 // Quick-load: Lyon (562) takes Chambéry (73xxx) + Voiron area from Grenoble (435)
@@ -371,7 +403,7 @@ function quickLoadLyonChamberysVoiron() {
       });
     }
   }
-  state.scenario.active = true; renderAll();
+  state.scenario.active = true; renderAll(); showToast("✓ Scénario chargé — CPs en violet sur la carte", "#6D28D9");
 }
 
 function quickLoadAvignonValence() {
@@ -385,7 +417,7 @@ function quickLoadAvignonValence() {
       });
     }
   }
-  state.scenario.active = true; renderAll();
+  state.scenario.active = true; renderAll(); showToast("✓ Scénario chargé — CPs en violet sur la carte", "#6D28D9");
 }
 
 function quickLoadDijonBourg() {
@@ -399,7 +431,7 @@ function quickLoadDijonBourg() {
       });
     }
   }
-  state.scenario.active = true; renderAll();
+  state.scenario.active = true; renderAll(); showToast("✓ Scénario chargé — CPs en violet sur la carte", "#6D28D9");
 }
 
 function quickLoadClermontRoanne() {
@@ -414,7 +446,7 @@ function quickLoadClermontRoanne() {
       });
     }
   }
-  state.scenario.active = true; renderAll();
+  state.scenario.active = true; renderAll(); showToast("✓ Scénario chargé — CPs en violet sur la carte", "#6D28D9");
 }
 
 function quickLoadClermontAnnecy() {
@@ -428,7 +460,7 @@ function quickLoadClermontAnnecy() {
       });
     }
   }
-  state.scenario.active = true; renderAll();
+  state.scenario.active = true; renderAll(); showToast("✓ Scénario chargé — CPs en violet sur la carte", "#6D28D9");
 }
 
 // ============================================================
@@ -906,14 +938,23 @@ function renderMap(records) {
     unique.forEach(r => bounds.push(L.latLng(r.lat, r.lng)));
 
   } else if (state.mode === 'polygons') {
+    const hasHighlight = state.highlightCPs.size > 0;
     for (const r of unique) {
       const scenarioCode = state.scenario.active ? state.scenario.assignments[r.cp] : null;
-      let color, borderColor, borderWeight, borderDash;
+      const isHighlighted = hasHighlight && state.highlightCPs.has(r.cp);
+      let color, borderColor, borderWeight, borderDash, fillOpacity;
+      fillOpacity = hasHighlight && !isHighlighted ? 0.18 : 0.68;
       if (state.showOptimalOverlay) {
         color = getOptimalColor(r.cp);
         borderColor = 'rgba(255,255,255,.6)';
         borderWeight = 0.7;
         borderDash = null;
+      } else if (isHighlighted) {
+        color = colorFor(r);
+        borderColor = '#F97316';    // vivid orange ring
+        borderWeight = 4;
+        borderDash = null;
+        fillOpacity = 0.9;
       } else if (scenarioCode) {
         color = '#8B5CF6';
         borderColor = '#6D28D9';
@@ -930,11 +971,11 @@ function renderMap(records) {
       }
       for (const poly of r.polygons) {
         const layer = L.geoJSON(poly, {
-          style: { color: borderColor, weight: borderWeight, dashArray: borderDash, fillColor: color, fillOpacity: .68 },
+          style: { color: borderColor, weight: borderWeight, dashArray: borderDash, fillColor: color, fillOpacity },
         })
           .bindPopup(buildPopup(r), { maxWidth: 320 })
-          .on('mouseover', e => e.target.setStyle({ weight: borderWeight + 1.5, fillOpacity: .88 }))
-          .on('mouseout', e => e.target.setStyle({ weight: borderWeight, fillOpacity: .68, color: borderColor, dashArray: borderDash }))
+          .on('mouseover', e => e.target.setStyle({ weight: borderWeight + 1.5, fillOpacity: Math.min(fillOpacity + .15, 1) }))
+          .on('mouseout', e => e.target.setStyle({ weight: borderWeight, fillOpacity, color: borderColor, dashArray: borderDash }))
           .addTo(map);
         layers.polygons.push(layer);
         const b = layer.getBounds();
@@ -1458,8 +1499,11 @@ function renderInsights(records, unique) {
   const ins = document.getElementById('insights');
   ins.innerHTML = '';
 
-  // Global export button — visible to all users
-  ins.innerHTML += `<div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+  // Toolbar: export + clear highlight
+  ins.innerHTML += `<div style="display:flex;gap:6px;justify-content:flex-end;margin-bottom:8px;flex-wrap:wrap">
+    ${state.highlightCPs.size > 0 ? `<button onclick="clearHighlight()" style="display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:8px;font-size:11px;font-weight:700;border:1.5px solid #F97316;background:#FFF7ED;color:#C2410C;cursor:pointer;font-family:inherit">
+      ✕ Effacer surbrillance (${state.highlightCPs.size} CP)
+    </button>` : ''}
     <button onclick="exportOptimisationXLSX()" style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:8px;font-size:11px;font-weight:700;border:1.5px solid #0A8754;background:white;color:#0A8754;cursor:pointer;font-family:inherit;box-shadow:0 1px 4px #0001">
       📥 Exporter toutes les pistes (Excel)
     </button>
@@ -1511,8 +1555,12 @@ function renderInsights(records, unique) {
       const pmas = [...new Set((flowsByCP[r.cp]||[]).map(x => x.flow.pma))];
       return `<code style="background:white;padding:1px 5px;border-radius:3px;border:1px solid var(--line);font-family:monospace;font-size:10px">${r.cp}</code> ${pmas.map(p=>`<span style="color:${PMA_COLORS[p]};font-weight:700">${p}</span>`).join(' + ')}`;
     }).join('<br>');
+    const communCPsList = unique.filter(r => r.category === 'commun').map(r => r.cp);
     ins.innerHTML += `<div class="insight-card" style="border-color:${CP_CATEGORY_COLORS.commun}44">
-      <div class="insight-title"><div class="insight-icon" style="background:#FEF9C3">🔗</div>${communN} CP en support inter-PMA (commun)</div>
+      <div class="insight-title">
+        <div class="insight-icon" style="background:#FEF9C3">🔗</div>${communN} CP en support inter-PMA (commun)
+        <button onclick="highlightOnMap(${JSON.stringify(communCPsList)},'Support inter-PMA')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+      </div>
       ${communSample}${communN > 5 ? `<br><span style="color:var(--ink-3)">…et ${communN-5} autres</span>` : ''}
       <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Ces CPs sont <b>intentionnellement partagés</b> entre PMAs pour assurer le support mutuel entre unités.</div>
     </div>`;
@@ -1537,8 +1585,12 @@ function renderInsights(records, unique) {
     const top = misrouted.slice(0,4).map(m =>
       `<code style="font-family:monospace;font-size:10px">${m.cp}</code> <span style="color:var(--ink-3)">${m.store.pma}</span> → <b>${m.bestStore.pma}</b> · +${Math.round(m.gain)} km gagné`
     ).join('<br>');
+    const misroutedCPsList = misrouted.map(m => m.cp);
     ins.innerHTML += `<div class="insight-card">
-      <div class="insight-title"><div class="insight-icon" style="background:#FEE2E2">🔀</div>${misrouted.length} CP propres plus proches d'un autre magasin</div>
+      <div class="insight-title">
+        <div class="insight-icon" style="background:#FEE2E2">🔀</div>${misrouted.length} CP propres plus proches d'un autre magasin
+        <button onclick="highlightOnMap(${JSON.stringify(misroutedCPsList)},'Réaffectation distance')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+      </div>
       ${top}${misrouted.length>4?`<br><span style="color:var(--ink-3)">…et ${misrouted.length-4} autres</span>`:''}
       <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Gain potentiel : <b>${Math.round(totalGain)} km</b> / tournée. (CPs croisés/communs exclus — support inter-PMA intentionnel.)</div>
     </div>`;
@@ -1555,8 +1607,12 @@ function renderInsights(records, unique) {
       const k = `Store ${r.flow.storeCode} → PMA ${r.flow.pma}`;
       grouped[k] = (grouped[k]||0) + 1;
     }
+    const lcdiCPsList = [...new Set(crossLCDI.map(r => r.cp))];
     ins.innerHTML += `<div class="insight-card">
-      <div class="insight-title"><div class="insight-icon" style="background:#EDE9FE">🔗</div>Flux LCDI inter-PMA</div>
+      <div class="insight-title">
+        <div class="insight-icon" style="background:#EDE9FE">🔗</div>Flux LCDI inter-PMA
+        <button onclick="highlightOnMap(${JSON.stringify(lcdiCPsList)},'LCDI inter-PMA')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+      </div>
       ${Object.entries(grouped).map(([k,v]) => `<code style="font-family:monospace;font-size:10px">${k}</code> · ${v} CP`).join('<br>')}
       <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Vérifier pertinence vs réaffectation directe.</div>
     </div>`;
@@ -1608,8 +1664,12 @@ function renderInsights(records, unique) {
           <span style="color:var(--ink-3);margin-left:auto;font-weight:500">${e.cps.length} CP · ${fmt(e.pop)} hab.</span>
         </div>`;
       }).join('');
+      const allOptCPs = optEntries.flatMap(e => e.cpList.map(r => r.cp));
       ins.innerHTML += `<div class="insight-card" style="border-color:#8B5CF644">
-        <div class="insight-title"><div class="insight-icon" style="background:#EDE9FE">🎯</div>Optimisation distance (avec magasins support)</div>
+        <div class="insight-title">
+          <div class="insight-icon" style="background:#EDE9FE">🎯</div>Optimisation distance (avec magasins support)
+          <button onclick="highlightOnMap(${JSON.stringify(allOptCPs)},'Optimisation distance')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+        </div>
         <div style="margin-bottom:8px;font-size:10px;color:var(--ink-3)">Gain potentiel : <b style="color:var(--ink)">${Math.round(totGain)} km</b> · <b style="color:var(--ink)">${fmt(totPop)} hab.</b> mieux desservis</div>
         ${rows}
         <div style="margin-top:9px">
@@ -1662,8 +1722,12 @@ function renderInsights(records, unique) {
           <span style="color:var(--ink-3);margin-left:auto;font-weight:500">${fmt(d.pop)} hab. · −${Math.round(d.gain)} km</span>
         </div>`;
       }).join('');
+      const clusterCPsList = clusters.flatMap(d => d.recs.map(r => r.cp));
       ins.innerHTML += `<div class="insight-card" style="border-color:#06B6D444">
-        <div class="insight-title"><div class="insight-icon" style="background:#E0F2FE">🗺️</div>Clusters départementaux à optimiser</div>
+        <div class="insight-title">
+          <div class="insight-icon" style="background:#E0F2FE">🗺️</div>Clusters départementaux à optimiser
+          <button onclick="highlightOnMap(${JSON.stringify(clusterCPsList)},'Clusters dép.')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+        </div>
         ${rows}
         <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Départements où un autre magasin est en moyenne plus proche. Activez le scénario pour simuler.</div>
       </div>`;
@@ -1823,13 +1887,17 @@ function renderScenarioPanel() {
   const hasShared = Object.keys(state.scenario.assignments).length > 0;
 
   box.innerHTML = `
-    <label class="toggle-row" for="toggle-scenario" style="margin-bottom:10px">
-      <input type="checkbox" id="toggle-scenario" ${state.scenario.active ? 'checked' : ''} onchange="toggleScenario()">
-      <span class="toggle-text">
-        <b>Mode scénario actif</b>
-        <small>Cliquez un CP sur la carte pour le réaffecter</small>
-      </span>
-    </label>
+    <div style="background:${state.scenario.active?'#F3E8FF':'var(--bg)'};border:1.5px solid ${state.scenario.active?'#8B5CF6':'var(--line)'};border-radius:10px;padding:10px 12px;margin-bottom:10px;transition:all .2s">
+      <label class="toggle-row" for="toggle-scenario" style="margin-bottom:${state.scenario.active?'6':'0'}px;cursor:pointer">
+        <input type="checkbox" id="toggle-scenario" ${state.scenario.active ? 'checked' : ''} onchange="toggleScenario()">
+        <span class="toggle-text">
+          <b style="color:${state.scenario.active?'#6D28D9':'var(--ink)'}">🎯 Mode simulation ${state.scenario.active ? 'ACTIF' : 'inactif'}</b>
+        </span>
+      </label>
+      ${state.scenario.active
+        ? `<div style="font-size:10px;color:#6D28D9">Cliquez un CP sur la carte pour le réaffecter à une autre BU. Les CPs en violet sont réaffectés.</div>`
+        : `<div style="font-size:10px;color:var(--ink-3)">Activez pour tester des réaffectations de CPs entre BUs et mesurer l'impact en km.</div>`}
+    </div>
 
     ${state.scenario.active ? `
     <div class="sec-label" style="margin-bottom:7px">Chargement rapide — slides PMA</div>
@@ -2399,7 +2467,7 @@ function wireUI() {
     state.drawerOpen = !state.drawerOpen;
     document.getElementById('bottom-drawer').classList.toggle('open', state.drawerOpen);
     document.getElementById('drawer-label').textContent =
-      state.drawerOpen ? 'Masquer le tableau' : 'Tableau détaillé par dépôt';
+      state.drawerOpen ? 'Masquer le tableau' : 'Tableau détaillé par BU';
   };
 
   document.getElementById('export-csv').onclick = exportCSV;

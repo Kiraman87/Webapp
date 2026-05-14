@@ -1,0 +1,17 @@
+{
+  "_instructions": "Copie le bloc 'mcpServers' dans ton fichier claude_desktop_config.json existant.",
+  "_location_mac":     "~/Library/Application Support/Claude/claude_desktop_config.json",
+  "_location_windows": "%APPDATA%\\Claude\\claude_desktop_config.json",
+
+  "mcpServers": {
+    "hermes": {
+      "command": "node",
+      "args": ["/CHEMIN/ABSOLU/VERS/mcp-hermes/server.js"],
+      "env": {
+        "HERMES_BASE_URL": "https://TON-DOMAINE-VPS.com",
+        "HERMES_API_KEY":  "TA_CLE_API_ICI",
+        "HERMES_MODEL":    "hermes"
+      }
+    }
+  }
+}

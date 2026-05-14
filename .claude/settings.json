@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "hermes": {
+      "command": "node",
+      "args": ["./mcp-hermes/server.js"],
+      "env": {
+        "HERMES_BASE_URL": "https://TON-DOMAINE-VPS.com",
+        "HERMES_API_KEY":  "TA_CLE_API_ICI",
+        "HERMES_MODEL":    "hermes"
+      }
+    }
+  }
+}

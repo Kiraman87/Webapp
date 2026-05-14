@@ -92,6 +92,15 @@ function sourceTASortKey(name) {
 // ============================================================
 const ANALYST_MODE = new URLSearchParams(location.search).get('analyst') === '1';
 
+// Decode shared scenario from URL (?scenario=<base64>)
+function _decodeScenarioURL() {
+  try {
+    const raw = new URLSearchParams(location.search).get('scenario');
+    if (!raw) return {};
+    return JSON.parse(atob(raw));
+  } catch { return {}; }
+}
+
 let state = {
   selectedPMAs:      new Set(['Lyon']),
   enabledFlowIds:    new Set(M.flows.map(f => f._id)),
@@ -104,10 +113,15 @@ let state = {
   speedKmh:          65,
   showLogistics:     true,
   showOptimalOverlay: false,
-  scenario:          { active: false, name: 'Scénario 1', assignments: {} },
-  leftOpen:          true,
-  rightOpen:         true,
-  drawerOpen:        false,
+  scenario: {
+    active: false,
+    name: 'Scénario 1',
+    assignments: _decodeScenarioURL(),
+    history: [],   // undo stack — each entry is a snapshot of assignments
+  },
+  leftOpen:  true,
+  rightOpen: true,
+  drawerOpen: false,
 };
 
 // ============================================================
@@ -286,16 +300,35 @@ function getOptimalColor(cp) {
   return pma ? PMA_COLORS[pma] : '#9CA3AF';
 }
 
-// Scenario: assign/unassign a CP, re-render
+// Scenario: assign/unassign a CP, re-render (with undo stack)
+function _pushHistory() {
+  state.scenario.history.push({ ...state.scenario.assignments });
+  if (state.scenario.history.length > 20) state.scenario.history.shift();
+}
 function assignScenario(cp, storeCode) {
+  _pushHistory();
   if (storeCode) state.scenario.assignments[cp] = storeCode;
   else delete state.scenario.assignments[cp];
   map.closePopup();
   renderAll();
 }
-function unassignCP(cp) { delete state.scenario.assignments[cp]; renderAll(); }
-function resetScenario() { state.scenario.assignments = {}; renderAll(); }
+function unassignCP(cp) { _pushHistory(); delete state.scenario.assignments[cp]; renderAll(); }
+function undoScenario() {
+  if (!state.scenario.history.length) return;
+  state.scenario.assignments = state.scenario.history.pop();
+  renderAll();
+}
+function resetScenario() { _pushHistory(); state.scenario.assignments = {}; renderAll(); }
 function toggleScenario() { state.scenario.active = !state.scenario.active; renderAll(); }
+
+function shareScenario() {
+  const encoded = btoa(JSON.stringify(state.scenario.assignments));
+  const url = `${location.origin}${location.pathname}?scenario=${encoded}${ANALYST_MODE ? '&analyst=1' : ''}`;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = document.getElementById('btn-share-scenario');
+    if (btn) { btn.textContent = '✓ Lien copié !'; setTimeout(() => { btn.textContent = '🔗 Copier le lien'; }, 2000); }
+  }).catch(() => { prompt('Copiez ce lien :', url); });
+}
 function toggleOptimalOverlay() { state.showOptimalOverlay = !state.showOptimalOverlay; renderAll(); }
 
 function exportScenario() {
@@ -313,6 +346,7 @@ function exportScenario() {
 
 // Quick-load scenario: Lyon (562) takes Z1+Z2 of Saint-Étienne (431)
 function quickLoadLyonSupport431() {
+  _pushHistory();
   for (const flow of M.flows) {
     if (flow.storeCode !== '431') continue;
     for (const [zoneName, zone] of Object.entries(flow.zones)) {
@@ -326,6 +360,7 @@ function quickLoadLyonSupport431() {
 
 // Quick-load: Lyon (562) takes Chambéry (73xxx) + Voiron area from Grenoble (435)
 function quickLoadLyonChamberysVoiron() {
+  _pushHistory();
   const VOIRON = new Set(['38500','38290','38330','38340','38480']);
   for (const flow of M.flows) {
     if (flow.storeCode !== '435') continue;
@@ -339,8 +374,8 @@ function quickLoadLyonChamberysVoiron() {
   state.scenario.active = true; renderAll();
 }
 
-// Quick-load: Avignon takes Valence area (26xxx) from Grenoble (435)
 function quickLoadAvignonValence() {
+  _pushHistory();
   for (const flow of M.flows) {
     if (flow.storeCode !== '435') continue;
     for (const zone of Object.values(flow.zones)) {
@@ -353,8 +388,8 @@ function quickLoadAvignonValence() {
   state.scenario.active = true; renderAll();
 }
 
-// Quick-load: Dijon takes Bourg-en-Bresse area (01xxx) from Lyon (562)
 function quickLoadDijonBourg() {
+  _pushHistory();
   for (const flow of M.flows) {
     if (flow.storeCode !== '562') continue;
     for (const zone of Object.values(flow.zones)) {
@@ -367,9 +402,8 @@ function quickLoadDijonBourg() {
   state.scenario.active = true; renderAll();
 }
 
-// Quick-load: Clermont takes Roanne agglomeration (42300/42600/42120/42470 etc.) from Saint-Étienne (431)
 function quickLoadClermontRoanne() {
-  // Roanne arrondissement zips: 42300, 42120, 42155, 42190, 42310, 42410, 42470, 42600, 42640, 42670, 42720, 42820, 42840
+  _pushHistory();
   const ROANNE = new Set(['42300','42120','42155','42190','42310','42410','42470','42600','42640','42670','42720','42820','42840','42370','42390','42420','42460']);
   for (const flow of M.flows) {
     if (flow.storeCode !== '431') continue;
@@ -383,8 +417,8 @@ function quickLoadClermontRoanne() {
   state.scenario.active = true; renderAll();
 }
 
-// Quick-load: Clermont takes Annecy LCDI zone from Grenoble (435 → 345 via LSC2552)
 function quickLoadClermontAnnecy() {
+  _pushHistory();
   for (const flow of M.flows) {
     if (flow.storeCode !== '435') continue;
     for (const zone of Object.values(flow.zones)) {
@@ -1779,6 +1813,15 @@ function renderScenarioPanel() {
     </div>`;
   }).join('');
 
+  // Compute before/after KPIs
+  const allRecords = buildRecords();
+  const uniqueAll  = dedupe(allRecords);
+  let basePop = 0, baseDist = 0;
+  for (const r of uniqueAll) { basePop += r.population; baseDist += r.dist; }
+  const baseDistAvg = uniqueAll.length ? baseDist / uniqueAll.length : 0;
+
+  const hasShared = Object.keys(state.scenario.assignments).length > 0;
+
   box.innerHTML = `
     <label class="toggle-row" for="toggle-scenario" style="margin-bottom:10px">
       <input type="checkbox" id="toggle-scenario" ${state.scenario.active ? 'checked' : ''} onchange="toggleScenario()">
@@ -1801,15 +1844,34 @@ function renderScenarioPanel() {
       </button>`).join('')}
     </div>
 
-    <div class="sec-label" style="margin-bottom:7px">KPIs scénario</div>
-    <div class="stat-grid" style="margin-bottom:10px">
-      <div class="stat-card"><div class="stat-num">${assignedCPs.length}</div><div class="stat-label">CP réaffectés</div></div>
-      <div class="stat-card"><div class="stat-num">${Math.round(assignedPop/1000)}<small>k</small></div><div class="stat-label">Habitants</div></div>
-      <div class="stat-card" style="grid-column:1/-1">
-        <div class="stat-num" style="color:${gainKm>=0?'var(--success)':'var(--danger)'}">
-          ${gainKm>=0?'+':''}${Math.round(gainKm)}<small>km</small>
-        </div>
-        <div class="stat-label">Gain total estimé / tournée</div>
+    <div class="sec-label" style="margin-bottom:7px">Comparaison avant / après</div>
+    <div style="border:1.5px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:12px;font-size:10px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--bg);font-weight:700;font-size:9px;text-align:center;color:var(--ink-3);padding:5px 0;border-bottom:1px solid var(--line)">
+        <span>Plan actuel</span><span>Scénario</span><span>Δ</span>
+      </div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;align-items:center;padding:5px 8px;border-bottom:1px solid var(--line)">
+        <span style="font-size:9px;color:var(--ink-3);grid-column:1">CP réaffectés</span>
+        <span style="text-align:center;font-weight:700">—</span>
+        <span style="text-align:center;font-weight:700;color:#8B5CF6">${assignedCPs.length}</span>
+        <span style="text-align:center;font-weight:700;color:#8B5CF6">${assignedCPs.length > 0 ? '+'+assignedCPs.length : '—'}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;align-items:center;padding:5px 8px;border-bottom:1px solid var(--line)">
+        <span style="font-size:9px;color:var(--ink-3)">Population</span>
+        <span style="text-align:center;font-weight:700">${Math.round(basePop/1000)}k</span>
+        <span style="text-align:center;font-weight:700;color:#8B5CF6">${Math.round((basePop)/1000)}k</span>
+        <span style="text-align:center;font-weight:700;color:var(--ink-3)">—</span>
+      </div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;align-items:center;padding:5px 8px;border-bottom:1px solid var(--line)">
+        <span style="font-size:9px;color:var(--ink-3)">Dist. moy.</span>
+        <span style="text-align:center;font-weight:700">${Math.round(baseDistAvg)} km</span>
+        <span style="text-align:center;font-weight:700;color:#8B5CF6">${Math.round(baseDistAvg - (gainKm / Math.max(assignedCPs.length,1)))} km</span>
+        <span style="text-align:center;font-weight:700;color:${gainKm>=0?'#0A8754':'#DC2626'}">${gainKm>=0?'−':'+'}${Math.abs(Math.round(gainKm / Math.max(assignedCPs.length,1)))} km/CP</span>
+      </div>
+      <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;align-items:center;padding:5px 8px">
+        <span style="font-size:9px;color:var(--ink-3)">Gain total</span>
+        <span style="text-align:center;font-weight:700">0 km</span>
+        <span style="text-align:center;font-weight:700;color:${gainKm>=0?'#0A8754':'#DC2626'}">${gainKm>=0?'+':''}${Math.round(gainKm)} km</span>
+        <span style="text-align:center;font-weight:700;color:${gainKm>=0?'#0A8754':'#DC2626'}">${gainKm>=0?'▲':'▼'} ${Math.abs(Math.round(gainKm))} km</span>
       </div>
     </div>
 
@@ -1817,12 +1879,16 @@ function renderScenarioPanel() {
       <div class="sec-label" style="margin-bottom:7px">Réaffectations (${assignedCPs.length})</div>
       ${assignedList}
       ${assignedCPs.length > 8 ? `<div style="font-size:10px;color:var(--ink-3);margin-top:3px">…et ${assignedCPs.length-8} autres</div>` : ''}
-      <div style="display:flex;gap:6px;margin-top:10px">
-        <button onclick="exportScenario()" style="flex:1;padding:7px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid var(--blue);color:var(--blue);background:white;cursor:pointer;font-family:inherit">📥 Export JSON</button>
-        <button onclick="resetScenario()" style="padding:7px 12px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid var(--danger);color:var(--danger);background:white;cursor:pointer;font-family:inherit">Reset</button>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px">
+        <button id="btn-share-scenario" onclick="shareScenario()" style="flex:1;min-width:100px;padding:7px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid #8B5CF6;color:#8B5CF6;background:white;cursor:pointer;font-family:inherit">🔗 Copier le lien</button>
+        <button onclick="exportScenario()" style="flex:1;min-width:100px;padding:7px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid var(--blue);color:var(--blue);background:white;cursor:pointer;font-family:inherit">📥 JSON</button>
+        <button onclick="undoScenario()" ${state.scenario.history.length===0?'disabled':''} style="padding:7px 10px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid var(--ink-3);color:${state.scenario.history.length?'var(--ink)':'var(--ink-3)'};background:white;cursor:${state.scenario.history.length?'pointer':'default'};font-family:inherit;opacity:${state.scenario.history.length?1:0.45}">↩</button>
+        <button onclick="resetScenario()" style="padding:7px 10px;border-radius:7px;font-size:11px;font-weight:700;border:1.5px solid var(--danger);color:var(--danger);background:white;cursor:pointer;font-family:inherit">✕</button>
       </div>
     ` : `<div style="font-size:11px;color:var(--ink-3)">Utilisez les boutons ci-dessus ou cliquez un CP sur la carte.</div>`}
-    ` : `<div style="font-size:11px;color:var(--ink-3)">Activez le mode scénario pour tester des réaffectations et mesurer l'impact.</div>`}
+    ` : `
+    ${hasShared ? `<div style="font-size:11px;color:#8B5CF6;font-weight:600;margin-bottom:8px">📎 Scénario chargé depuis un lien partagé (${assignedCPs.length} CP). Activez le mode pour l'explorer.</div>` : ''}
+    <div style="font-size:11px;color:var(--ink-3)">Activez le mode scénario pour tester des réaffectations et mesurer l'impact.</div>`}
   `;
 }
 
@@ -1908,21 +1974,50 @@ function setupSearch() {
   let drop;
 
   input.addEventListener('input', () => {
-    const q = input.value.trim();
+    const raw = input.value.trim();
     if (drop) { drop.remove(); drop = null; }
-    if (q.length < 2) return;
-    const matches = Object.keys(cpData).filter(cp => cp.startsWith(q)).slice(0, 8);
-    if (!matches.length) return;
+    if (raw.length < 2) return;
+    const q = raw.toLowerCase();
+    const isNumeric = /^\d+$/.test(q);
+
+    // CP prefix matches first, then commune name matches
+    const cpMatches = isNumeric
+      ? Object.keys(cpData).filter(cp => cp.startsWith(q))
+      : [];
+    const communeMatches = Object.keys(cpData).filter(cp => {
+      if (cpMatches.includes(cp)) return false;
+      return (cpData[cp].name || '').toLowerCase().includes(q);
+    });
+
+    const allMatches = [...cpMatches.slice(0, 5), ...communeMatches.slice(0, 5)].slice(0, 8);
+    if (!allMatches.length) return;
 
     drop = document.createElement('div');
     drop.className = 'cp-results';
-    for (const cp of matches) {
+
+    if (cpMatches.length && communeMatches.length) {
+      const sep = document.createElement('div');
+      sep.style.cssText = 'font-size:9px;font-weight:700;color:var(--ink-3);text-transform:uppercase;padding:4px 10px 2px;letter-spacing:.05em';
+      sep.textContent = 'Codes postaux';
+      drop.appendChild(sep);
+    }
+
+    for (const cp of allMatches) {
+      if (communeMatches.length && cp === communeMatches[0] && cpMatches.length) {
+        const sep2 = document.createElement('div');
+        sep2.style.cssText = 'font-size:9px;font-weight:700;color:var(--ink-3);text-transform:uppercase;padding:6px 10px 2px;border-top:1px solid var(--line);letter-spacing:.05em';
+        sep2.textContent = 'Communes';
+        drop.appendChild(sep2);
+      }
       const d = cpData[cp];
       const flows = flowsByCP[cp] || [];
-      const pmas = [...new Set(flows.map(x=>x.flow.pma))];
+      const pmas = [...new Set(flows.map(x => x.flow.pma))];
       const it = document.createElement('div');
       it.className = 'cp-result-item';
-      it.innerHTML = `<b>${cp}</b> · ${d.name}<small>PMA : ${pmas.join(', ')||'—'} · ${flows.length} flux</small>`;
+      const nameHl = communeMatches.includes(cp)
+        ? (d.name || '').replace(new RegExp(`(${raw})`, 'i'), '<b style="color:var(--blue)">$1</b>')
+        : (d.name || '');
+      it.innerHTML = `<b>${cp}</b> · ${nameHl}<small>PMA : ${pmas.map(p=>`<span style="color:${PMA_COLORS[p]||'#888'};font-weight:700">${p}</span>`).join(', ')||'—'} · ${flows.length} flux</small>`;
       it.onclick = () => { map.flyTo([d.lat, d.lng], 12, { duration: .7 }); drop.remove(); drop = null; input.value = ''; };
       drop.appendChild(it);
     }
@@ -2310,6 +2405,11 @@ function wireUI() {
   document.getElementById('export-csv').onclick = exportCSV;
   setupSearch();
   updatePanelPositions();
+
+  // Auto-activate scenario if loaded from shared URL
+  if (Object.keys(state.scenario.assignments).length > 0) {
+    state.scenario.active = true;
+  }
 }
 
 // ============================================================

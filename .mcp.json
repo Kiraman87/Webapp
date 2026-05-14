@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "hermes": {
+      "type": "stdio",
+      "command": "hermes",
+      "args": [
+        "mcp",
+        "serve"
+      ],
+      "env": {
+        "HERMES_BASE_URL": "https://workspace.srv1570727.hstgr.cloud",
+        "HERMES_API_KEY": "TA_CLE"
+      }
+    }
+  }
+}

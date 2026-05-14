@@ -1,0 +1,17 @@
+[Unit]
+Description=Hermes MCP SSE Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/mcp-hermes-test
+EnvironmentFile=/root/mcp-hermes-test/.env
+ExecStart=/usr/bin/node /root/mcp-hermes-test/server-http.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

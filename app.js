@@ -354,16 +354,21 @@ function _hlBtn(id, cps, label) { _hl[id] = { cps, label }; return `_hlShow('${i
 function _hlShow(id) { const e = _hl[id]; if (e) highlightOnMap(e.cps, e.label); }
 
 function highlightOnMap(cpArray, label) {
-  state.highlightCPs = new Set(cpArray);
+  // Normalize CP codes to 5-digit strings to match cpData keys
+  const normalized = cpArray.map(cp => String(cp).trim().padStart(5, '0'));
+  state.highlightCPs = new Set(normalized);
   renderAll();
-  // Fly to centroid of highlighted CPs
-  const pts = cpArray.map(cp => cpData[cp]).filter(Boolean);
-  if (pts.length) {
-    const lat = pts.reduce((a, d) => a + d.lat, 0) / pts.length;
-    const lng = pts.reduce((a, d) => a + d.lng, 0) / pts.length;
-    map.flyTo([lat, lng], Math.max(map.getZoom(), 8), { duration: .8 });
+  // Compute bounds from highlighted CPs
+  const pts = normalized.map(cp => cpData[cp]).filter(Boolean);
+  if (pts.length === 1) {
+    map.flyTo([pts[0].lat, pts[0].lng], 12, { duration: .8 });
+  } else if (pts.length > 1) {
+    const lats = pts.map(p => p.lat), lngs = pts.map(p => p.lng);
+    const bounds = L.latLngBounds([Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]);
+    map.flyToBounds(bounds, { padding: [60, 60], maxZoom: 11, duration: .8 });
   }
-  showToast(`📍 ${cpArray.length} CP mis en évidence — ${label}`, '#6D28D9');
+  const sample = normalized.slice(0, 3).join(', ') + (normalized.length > 3 ? `, +${normalized.length-3}` : '');
+  showToast(`📍 ${normalized.length} CP en surbrillance (${sample}) — ${label}`, '#F97316');
 }
 function clearHighlight() { state.highlightCPs = new Set(); renderAll(); }
 
@@ -947,18 +952,18 @@ function renderMap(records) {
       const scenarioCode = state.scenario.active ? state.scenario.assignments[r.cp] : null;
       const isHighlighted = hasHighlight && state.highlightCPs.has(r.cp);
       let color, borderColor, borderWeight, borderDash, fillOpacity;
-      fillOpacity = hasHighlight && !isHighlighted ? 0.18 : 0.68;
+      fillOpacity = hasHighlight && !isHighlighted ? 0.08 : 0.68;
       if (state.showOptimalOverlay) {
         color = getOptimalColor(r.cp);
         borderColor = 'rgba(255,255,255,.6)';
         borderWeight = 0.7;
         borderDash = null;
       } else if (isHighlighted) {
-        color = colorFor(r);
-        borderColor = '#F97316';    // vivid orange ring
+        color = '#FB923C';          // bright orange fill
+        borderColor = '#9A3412';    // dark orange ring
         borderWeight = 4;
         borderDash = null;
-        fillOpacity = 0.9;
+        fillOpacity = 0.95;
       } else if (scenarioCode) {
         color = '#8B5CF6';
         borderColor = '#6D28D9';
@@ -984,6 +989,22 @@ function renderMap(records) {
         layers.polygons.push(layer);
         const b = layer.getBounds();
         if (b.isValid()) bounds.push(b);
+      }
+      // Add a clear pin marker on each highlighted CP
+      if (isHighlighted) {
+        const pinHtml = `<div style="background:#F97316;color:white;border:2.5px solid white;border-radius:50% 50% 50% 0;width:24px;height:24px;transform:rotate(-45deg);box-shadow:0 2px 6px #0005;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;font-family:system-ui">
+          <span style="transform:rotate(45deg)">📍</span>
+        </div>`;
+        const labelHtml = `<div style="background:#F97316;color:white;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;font-family:system-ui;box-shadow:0 1px 4px #0004;white-space:nowrap;border:1.5px solid white">${r.cp}</div>`;
+        const pin = L.marker([r.lat, r.lng], {
+          icon: L.divIcon({
+            className: '',
+            html: `<div style="position:relative;transform:translate(-12px,-22px)">${pinHtml}<div style="position:absolute;top:26px;left:50%;transform:translateX(-50%)">${labelHtml}</div></div>`,
+            iconSize: [0, 0], iconAnchor: [0, 0],
+          }),
+          interactive: false, keyboard: false,
+        }).addTo(map);
+        layers.polygons.push(pin);
       }
     }
 

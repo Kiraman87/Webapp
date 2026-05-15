@@ -116,6 +116,7 @@ let state = {
   showOrphanCPs:     false,
   highlightCPs: new Set(),   // CPs highlighted from insight cards (shown with pin on map)
   selection: new Set(),      // CPs selected via Ctrl+click for bulk reassignment
+  expandedDynPMAs: new Set(), // PMAs whose non-dynamic CP list is expanded in insights
   scenario: {
     active: false,
     name: 'Scénario 1',
@@ -373,6 +374,11 @@ function highlightOnMap(cpArray, label) {
   showToast(`📍 ${normalized.length} CP en surbrillance (${sample}) — ${label}`, '#F97316');
 }
 function clearHighlight() { state.highlightCPs = new Set(); renderAll(); }
+function toggleDynPMA(pma) {
+  if (state.expandedDynPMAs.has(pma)) state.expandedDynPMAs.delete(pma);
+  else state.expandedDynPMAs.add(pma);
+  renderAll();
+}
 
 function printMap() { window.print(); }
 
@@ -1122,6 +1128,36 @@ function renderMap(records) {
           interactive: false, keyboard: false,
         }).addTo(map);
         layers.polygons.push(pin);
+      }
+    }
+
+    // Scenario: show CPs assigned in scenario but outside current filter
+    // (e.g. Avignon quick-load assigns Grenoble CPs when only Lyon is selected)
+    if (state.scenario.active && Object.keys(state.scenario.assignments).length > 0) {
+      const renderedCPs = new Set(unique.map(r => r.cp));
+      const allS = allStoresForOptim();
+      for (const [cp, toCode] of Object.entries(state.scenario.assignments)) {
+        if (renderedCPs.has(cp)) continue;
+        const d = cpData[cp];
+        if (!d || !d.polygons?.length) continue;
+        const label = (allS[toCode]?.name || toCode).replace('IKEA ', '');
+        for (const poly of d.polygons) {
+          const layer = L.geoJSON(poly, {
+            style: { color: '#6D28D9', weight: 2.5, dashArray: '4 3', fillColor: '#8B5CF6', fillOpacity: 0.5 },
+          }).on('click', e => {
+            L.popup({ maxWidth: 260 })
+              .setContent(`<div style="padding:12px 14px;font-size:12px">
+                <b style="font-size:15px">${cp}</b>${d.name ? `<div style="color:var(--ink-2);font-size:11px;margin-top:2px">${d.name}</div>` : ''}
+                <div style="margin-top:8px;padding:5px 8px;border-radius:6px;background:#EDE9FE;font-size:11px;color:#6D28D9;font-weight:700">
+                  🔀 Réaffecté → ${label}
+                </div>
+                <div style="margin-top:6px;font-size:10px;color:var(--ink-3)">CP hors filtre actif — activez la PMA source pour le voir en contexte.</div>
+                <button onclick="unassignCP('${cp}')" style="margin-top:8px;padding:4px 10px;border-radius:5px;border:1.5px solid #DC2626;color:#DC2626;background:white;cursor:pointer;font-size:10px;font-family:inherit;font-weight:700">✕ Désassigner</button>
+              </div>`)
+              .setLatLng(e.latlng).openOn(map);
+          }).addTo(map);
+          layers.polygons.push(layer);
+        }
       }
     }
 
@@ -1946,11 +1982,11 @@ function renderInsights(records, unique) {
         const parts = [];
         if (d.ccd.length) parts.push(`<span style="color:#E04E2C;font-weight:700">${d.ccd.length} sans LCDD</span>`);
         if (d.lcdd.length) parts.push(`<span style="color:#0058A3;font-weight:700">${d.lcdd.length} sans CCD</span>`);
-        const uid = `dyn-${pma.replace(/\s/g,'')}`;
         const allCPs = [
           ...d.ccd.map(cp => ({ cp, missing: 'LCDD', color: '#E04E2C' })),
           ...d.lcdd.map(cp => ({ cp, missing: 'CCD',  color: '#0058A3' })),
         ];
+        const isExpanded = state.expandedDynPMAs.has(pma);
         const fullList = allCPs.map(({ cp, missing, color }) =>
           `<span style="display:inline-flex;align-items:center;gap:3px;margin:2px">
             <code style="font-family:monospace;font-size:10px;background:white;padding:1px 4px;border-radius:3px;border:1px solid var(--line)">${cp}</code>
@@ -1963,12 +1999,12 @@ function renderInsights(records, unique) {
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${col};margin-right:4px"></span>
               <b style="color:${col}">${pma}</b> : ${parts.join(' · ')}
             </div>
-            <button onclick="(function(el){el.style.display=el.style.display==='none'?'block':'none'})(document.getElementById('${uid}'))"
-              style="font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid var(--line);background:white;cursor:pointer;font-family:inherit;color:var(--ink-2);white-space:nowrap">
-              Voir tous (${allCPs.length})
+            <button onclick="toggleDynPMA('${pma}')"
+              style="font-size:9px;padding:2px 8px;border-radius:5px;border:1px solid var(--line);background:${isExpanded?'var(--ink)':'white'};color:${isExpanded?'white':'var(--ink-2)'};cursor:pointer;font-family:inherit;white-space:nowrap">
+              ${isExpanded ? '▲ Masquer' : `Voir tous (${allCPs.length})`}
             </button>
           </div>
-          <div id="${uid}" style="display:none;margin-top:6px;max-height:180px;overflow-y:auto;line-height:1.8">${fullList}</div>
+          <div style="display:${isExpanded?'block':'none'};margin-top:6px;max-height:180px;overflow-y:auto;line-height:1.8">${fullList}</div>
         </div>`;
       }).join('');
       ins.innerHTML += `<div class="insight-card" style="border-color:${colorDyn}44">

@@ -349,6 +349,10 @@ function showToast(msg, color = '#0A8754') {
 }
 
 // Highlight CPs from insight card on the map
+const _hl = {};   // registry: id → { cps, label }
+function _hlBtn(id, cps, label) { _hl[id] = { cps, label }; return `_hlShow('${id}')`; }
+function _hlShow(id) { const e = _hl[id]; if (e) highlightOnMap(e.cps, e.label); }
+
 function highlightOnMap(cpArray, label) {
   state.highlightCPs = new Set(cpArray);
   renderAll();
@@ -1559,7 +1563,7 @@ function renderInsights(records, unique) {
     ins.innerHTML += `<div class="insight-card" style="border-color:${CP_CATEGORY_COLORS.commun}44">
       <div class="insight-title">
         <div class="insight-icon" style="background:#FEF9C3">🔗</div>${communN} CP en support inter-PMA (commun)
-        <button onclick="highlightOnMap(${JSON.stringify(communCPsList)},'Support inter-PMA')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+        <button onclick="${_hlBtn('commun', communCPsList, 'Support inter-PMA')}" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
       </div>
       ${communSample}${communN > 5 ? `<br><span style="color:var(--ink-3)">…et ${communN-5} autres</span>` : ''}
       <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Ces CPs sont <b>intentionnellement partagés</b> entre PMAs pour assurer le support mutuel entre unités.</div>
@@ -1589,7 +1593,7 @@ function renderInsights(records, unique) {
     ins.innerHTML += `<div class="insight-card">
       <div class="insight-title">
         <div class="insight-icon" style="background:#FEE2E2">🔀</div>${misrouted.length} CP propres plus proches d'un autre magasin
-        <button onclick="highlightOnMap(${JSON.stringify(misroutedCPsList)},'Réaffectation distance')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+        <button onclick="${_hlBtn('misrouted', misroutedCPsList, 'Réaffectation distance')}" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
       </div>
       ${top}${misrouted.length>4?`<br><span style="color:var(--ink-3)">…et ${misrouted.length-4} autres</span>`:''}
       <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Gain potentiel : <b>${Math.round(totalGain)} km</b> / tournée. (CPs croisés/communs exclus — support inter-PMA intentionnel.)</div>
@@ -1611,7 +1615,7 @@ function renderInsights(records, unique) {
     ins.innerHTML += `<div class="insight-card">
       <div class="insight-title">
         <div class="insight-icon" style="background:#EDE9FE">🔗</div>Flux LCDI inter-PMA
-        <button onclick="highlightOnMap(${JSON.stringify(lcdiCPsList)},'LCDI inter-PMA')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+        <button onclick="${_hlBtn('lcdi', lcdiCPsList, 'LCDI inter-PMA')}" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
       </div>
       ${Object.entries(grouped).map(([k,v]) => `<code style="font-family:monospace;font-size:10px">${k}</code> · ${v} CP`).join('<br>')}
       <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Vérifier pertinence vs réaffectation directe.</div>
@@ -1668,7 +1672,7 @@ function renderInsights(records, unique) {
       ins.innerHTML += `<div class="insight-card" style="border-color:#8B5CF644">
         <div class="insight-title">
           <div class="insight-icon" style="background:#EDE9FE">🎯</div>Optimisation distance (avec magasins support)
-          <button onclick="highlightOnMap(${JSON.stringify(allOptCPs)},'Optimisation distance')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+          <button onclick="${_hlBtn('optdist', allOptCPs, 'Optimisation distance')}" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
         </div>
         <div style="margin-bottom:8px;font-size:10px;color:var(--ink-3)">Gain potentiel : <b style="color:var(--ink)">${Math.round(totGain)} km</b> · <b style="color:var(--ink)">${fmt(totPop)} hab.</b> mieux desservis</div>
         ${rows}
@@ -1726,7 +1730,7 @@ function renderInsights(records, unique) {
       ins.innerHTML += `<div class="insight-card" style="border-color:#06B6D444">
         <div class="insight-title">
           <div class="insight-icon" style="background:#E0F2FE">🗺️</div>Clusters départementaux à optimiser
-          <button onclick="highlightOnMap(${JSON.stringify(clusterCPsList)},'Clusters dép.')" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
+          <button onclick="${_hlBtn('clusters', clusterCPsList, 'Clusters dép.')}" style="margin-left:auto;padding:3px 9px;border-radius:6px;font-size:9px;font-weight:700;border:1.5px solid #F97316;background:white;color:#F97316;cursor:pointer;font-family:inherit;white-space:nowrap">🗺️ Voir sur carte</button>
         </div>
         ${rows}
         <div style="margin-top:7px;font-size:10px;color:var(--ink-3)">Départements où un autre magasin est en moyenne plus proche. Activez le scénario pour simuler.</div>

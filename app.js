@@ -113,7 +113,9 @@ let state = {
   speedKmh:          65,
   showLogistics:     true,
   showOptimalOverlay: false,
+  showOrphanCPs:     false,
   highlightCPs: new Set(),   // CPs highlighted from insight cards (shown with pin on map)
+  selection: new Set(),      // CPs selected via Ctrl+click for bulk reassignment
   scenario: {
     active: false,
     name: 'Scénario 1',
@@ -371,6 +373,105 @@ function highlightOnMap(cpArray, label) {
   showToast(`📍 ${normalized.length} CP en surbrillance (${sample}) — ${label}`, '#F97316');
 }
 function clearHighlight() { state.highlightCPs = new Set(); renderAll(); }
+
+function printMap() { window.print(); }
+
+// ============================================================
+// Multi-CP selection (Ctrl+click on polygons)
+// ============================================================
+function renderSelectionToolbar() {
+  const bar = document.getElementById('selection-toolbar');
+  if (!bar) return;
+  const n = state.selection.size;
+  if (n === 0) { bar.style.display = 'none'; return; }
+  const allS = allStoresForOptim();
+  const storeOptions = Object.entries(allS)
+    .map(([code, s]) => `<option value="${code}">${s.name.replace('IKEA ','')} (${code})</option>`)
+    .join('');
+  bar.style.display = 'flex';
+  bar.innerHTML = `
+    <b style="font-size:12px;white-space:nowrap;color:#0E7490">${n} CP${n>1?'s':''} sélectionné${n>1?'s':''}</b>
+    <select id="sel-store-pick" style="padding:5px 8px;border-radius:6px;border:1.5px solid var(--line);font-size:11px;font-family:inherit;max-width:165px">
+      <option value="">→ Choisir BU…</option>
+      ${storeOptions}
+    </select>
+    <button onclick="assignSelectionToStore()" style="padding:6px 12px;border-radius:7px;background:#8B5CF6;color:white;border:none;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">✓ Réaffecter</button>
+    <button onclick="clearSelection()" style="padding:6px 10px;border-radius:7px;background:white;color:var(--ink-3);border:1.5px solid var(--line);font-size:11px;cursor:pointer;font-family:inherit">✕ Annuler</button>
+    <span style="font-size:10px;color:var(--ink-3)">Ctrl+clic pour ajouter/retirer</span>
+  `;
+}
+
+function clearSelection() {
+  state.selection = new Set();
+  renderSelectionToolbar();
+  renderAll();
+}
+
+function assignSelectionToStore() {
+  const code = document.getElementById('sel-store-pick')?.value;
+  if (!code) { showToast('⚠️ Choisissez une BU cible d\'abord', '#F59E0B'); return; }
+  if (state.selection.size === 0) return;
+  if (!state.scenario.active) state.scenario.active = true;
+  _pushHistory();
+  const count = state.selection.size;
+  for (const cp of state.selection) state.scenario.assignments[cp] = code;
+  state.selection = new Set();
+  renderAll();
+  showToast(`✅ ${count} CP réaffecté${count>1?'s':''} → ${code}`, '#8B5CF6');
+}
+
+// ============================================================
+// KPI table by PMA
+// ============================================================
+function renderKPIByPMA(records) {
+  const box = document.getElementById('kpi-pma');
+  if (!box) return;
+  const unique = dedupe(records);
+  if (!unique.length) { box.innerHTML = '<div style="font-size:11px;color:var(--ink-3)">Aucune donnée.</div>'; return; }
+  const byPMA = {};
+  for (const r of unique) {
+    const pma = r.flow.pma;
+    if (!byPMA[pma]) byPMA[pma] = [];
+    byPMA[pma].push(r);
+  }
+  const rows = Object.entries(byPMA).map(([pma, recs]) => {
+    const pop  = recs.reduce((a,r)=>a+r.population,0);
+    const dAvg = recs.reduce((a,r)=>a+r.dist,0) / recs.length;
+    const cats = {propre:0,croise:0,commun:0};
+    recs.forEach(r => { cats[r.category] = (cats[r.category]||0)+1; });
+    const z1 = recs.filter(r=>r.timeZone==='1').length;
+    const z2 = recs.filter(r=>r.timeZone==='2').length;
+    const z3 = recs.filter(r=>r.timeZone==='3').length;
+    const col = PMA_COLORS[pma] || '#888';
+    return `<tr style="border-bottom:1px solid var(--line)">
+      <td style="padding:5px 4px 5px 2px;white-space:nowrap">
+        <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${col};margin-right:4px;vertical-align:middle"></span>
+        <b style="font-size:10px">${pma}</b>
+      </td>
+      <td style="text-align:right;font-weight:800;padding:5px 4px">${recs.length}</td>
+      <td style="text-align:right;padding:5px 4px">${Math.round(pop/1000)}k</td>
+      <td style="text-align:right;padding:5px 4px">${Math.round(dAvg)}</td>
+      <td style="text-align:center;padding:5px 4px;font-size:10px">
+        <span style="color:#059669;font-weight:700">${cats.propre}</span><span style="color:var(--ink-3)">/</span><span style="color:#7C3AED;font-weight:700">${cats.croise}</span><span style="color:var(--ink-3)">/</span><span style="color:#F59E0B;font-weight:700">${cats.commun}</span>
+      </td>
+      <td style="text-align:center;padding:5px 4px;font-size:10px">
+        <span style="color:#0A8754;font-weight:700">${z1}</span><span style="color:var(--ink-3)">/</span><span style="color:#5DADE2;font-weight:700">${z2}</span><span style="color:var(--ink-3)">/</span><span style="color:#E04E2C;font-weight:700">${z3}</span>
+      </td>
+    </tr>`;
+  }).join('');
+  const thStyle = 'font-size:9px;color:var(--ink-3);font-weight:800;text-transform:uppercase;letter-spacing:.06em;padding:4px 4px 6px';
+  box.innerHTML = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr style="border-bottom:1.5px solid var(--line)">
+      <th style="${thStyle};text-align:left">PMA</th>
+      <th style="${thStyle};text-align:right" title="Codes postaux">CP</th>
+      <th style="${thStyle};text-align:right">Pop.</th>
+      <th style="${thStyle};text-align:right" title="Distance moyenne km">km⌀</th>
+      <th style="${thStyle};text-align:center" title="Propres / Croisés / Communs">P/Cr/Co</th>
+      <th style="${thStyle};text-align:center" title="Z1 ≤45min / Z2 45-60 / Z3 60-110">Z1/2/3</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
 
 function exportScenario() {
   const data = {
@@ -951,6 +1052,7 @@ function renderMap(records) {
     for (const r of unique) {
       const scenarioCode = state.scenario.active ? state.scenario.assignments[r.cp] : null;
       const isHighlighted = hasHighlight && state.highlightCPs.has(r.cp);
+      const isSelected    = state.selection.has(r.cp);
       let color, borderColor, borderWeight, borderDash, fillOpacity;
       fillOpacity = hasHighlight && !isHighlighted ? 0.08 : 0.68;
       if (state.showOptimalOverlay) {
@@ -964,6 +1066,12 @@ function renderMap(records) {
         borderWeight = 4;
         borderDash = null;
         fillOpacity = 0.95;
+      } else if (isSelected) {
+        color = '#06B6D4';          // cyan fill
+        borderColor = '#0E7490';    // dark cyan ring
+        borderWeight = 3.5;
+        borderDash = null;
+        fillOpacity = 0.8;
       } else if (scenarioCode) {
         color = '#8B5CF6';
         borderColor = '#6D28D9';
@@ -982,7 +1090,16 @@ function renderMap(records) {
         const layer = L.geoJSON(poly, {
           style: { color: borderColor, weight: borderWeight, dashArray: borderDash, fillColor: color, fillOpacity },
         })
-          .bindPopup(buildPopup(r), { maxWidth: 320 })
+          .on('click', e => {
+            if (e.originalEvent.ctrlKey || e.originalEvent.metaKey) {
+              if (state.selection.has(r.cp)) state.selection.delete(r.cp);
+              else state.selection.add(r.cp);
+              renderSelectionToolbar();
+              renderAll();
+            } else {
+              L.popup({ maxWidth: 320 }).setContent(buildPopup(r)).setLatLng(e.latlng).openOn(map);
+            }
+          })
           .on('mouseover', e => e.target.setStyle({ weight: borderWeight + 1.5, fillOpacity: Math.min(fillOpacity + .15, 1) }))
           .on('mouseout', e => e.target.setStyle({ weight: borderWeight, fillOpacity, color: borderColor, dashArray: borderDash }))
           .addTo(map);
@@ -1005,6 +1122,24 @@ function renderMap(records) {
           interactive: false, keyboard: false,
         }).addTo(map);
         layers.polygons.push(pin);
+      }
+    }
+
+    // Orphan CPs: loaded from geo API but absent from all flows
+    if (state.showOrphanCPs) {
+      const renderedCPs = new Set(unique.map(r => r.cp));
+      for (const [cp, d] of Object.entries(cpData)) {
+        if (renderedCPs.has(cp) || !d.polygons?.length) continue;
+        for (const poly of d.polygons) {
+          const layer = L.geoJSON(poly, {
+            style: { color: '#9CA3AF', weight: 0.5, fillColor: '#D1D5DB', fillOpacity: 0.2 },
+          }).on('click', e => {
+            L.popup({ maxWidth: 200 })
+              .setContent(`<div style="padding:12px 14px;font-size:12px"><b>${cp}</b>${d.name ? `<div style="color:var(--ink-2);font-size:11px;margin-top:2px">${d.name}</div>` : ''}<div style="font-size:10px;color:#9CA3AF;margin-top:6px">Aucun flux assigné dans le plan actuel</div></div>`)
+              .setLatLng(e.latlng).openOn(map);
+          }).addTo(map);
+          layers.polygons.push(layer);
+        }
       }
     }
 
@@ -1514,6 +1649,7 @@ function renderRightPanel(records) {
       </div>`;
     }).join('');
 
+  renderKPIByPMA(records);
   renderInsights(records, unique);
 }
 
@@ -1533,6 +1669,16 @@ function renderInsights(records, unique) {
       📥 Exporter toutes les pistes (Excel)
     </button>
   </div>`;
+
+  // Data quality: orphan CPs (in cpData but no flow assignment)
+  const orphanCount = Object.keys(cpData).filter(cp => !flowsByCP[cp]).length;
+  if (orphanCount > 0) {
+    ins.innerHTML += `<div class="insight-card" style="border-color:#D1D5DB;background:#F9FAFB">
+      <div class="insight-title"><div class="insight-icon" style="background:#F3F4F6">⚠️</div>Qualité des données</div>
+      <div>${orphanCount} CP${orphanCount>1?'s':''} chargé${orphanCount>1?'s':''} depuis l'API sans flux assigné dans le plan.
+      <span style="color:var(--ink-3)">Activez "Afficher CPs sans flux" dans les filtres pour les visualiser en gris sur la carte.</span></div>
+    </div>`;
+  }
 
   // 1. Inter-PMA cooperation matrix (from ALL flowsByCP, not filtered)
   const coopMap = {};
@@ -2482,6 +2628,11 @@ function wireUI() {
     togOpt.checked = state.showOptimalOverlay;
     togOpt.onchange = () => { state.showOptimalOverlay = togOpt.checked; renderAll(); };
   }
+  const togOrphan = document.getElementById('toggle-orphan');
+  if (togOrphan) {
+    togOrphan.checked = state.showOrphanCPs;
+    togOrphan.onchange = () => { state.showOrphanCPs = togOrphan.checked; renderAll(); };
+  }
 
   document.getElementById('left-close').onclick  = () => { state.leftOpen  = false; updatePanelPositions(); };
   document.getElementById('right-close').onclick = () => { state.rightOpen = false; updatePanelPositions(); };
@@ -2521,4 +2672,5 @@ function renderAll() {
   renderRightPanel(records);
   renderDeptTables(records);
   renderScenarioPanel();
+  renderSelectionToolbar();
 }

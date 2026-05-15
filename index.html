@@ -496,6 +496,25 @@ html,body{height:100%;overflow:hidden;
   box-shadow:0 2px 8px rgba(0,0,0,.12);
 }
 .support-pin span{color:#6B7280;font-weight:900;font-size:9px;letter-spacing:.04em;}
+
+/* ── Selection toolbar ── */
+#selection-toolbar{
+  position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
+  z-index:500;display:none;align-items:center;gap:10px;flex-wrap:wrap;
+  background:rgba(255,255,255,.98);backdrop-filter:blur(16px);
+  border-radius:12px;padding:10px 16px;
+  border:1.5px solid #06B6D4;
+  box-shadow:0 4px 24px rgba(6,182,212,.25),0 1px 6px rgba(0,0,0,.08);
+}
+
+/* ── Print mode ── */
+@media print {
+  #top-bar,#left-panel,#right-panel,#map-controls,#bottom-drawer,
+  .panel-tab,#map-overlay,#selection-toolbar,#legend { display:none !important; }
+  #map { position:relative !important; }
+  body { overflow:visible !important; }
+  html,body { height:auto !important; }
+}
 </style>
 </head>
 <body>
@@ -551,9 +570,13 @@ html,body{height:100%;overflow:hidden;
     <div class="search-wrap">
       <input class="cp-search" id="cp-search" placeholder="Rechercher un CP…" maxlength="5" autocomplete="off">
     </div>
+    <button class="hdr-btn" onclick="printMap()" title="Imprimer la carte (masque les panneaux)">🖨️</button>
     <button class="hdr-btn" id="export-csv">↓ Export CSV</button>
   </div>
 </header>
+
+<!-- Multi-CP selection toolbar -->
+<div id="selection-toolbar"></div>
 
 <!-- Left panel -->
 <div class="panel" id="left-panel">
@@ -637,6 +660,13 @@ html,body{height:100%;overflow:hidden;
         <small>Colorie chaque CP selon le magasin le plus proche (incl. Clermont, Avignon, Dijon)</small>
       </span>
     </label>
+    <label class="toggle-row" for="toggle-orphan" style="margin-top:6px">
+      <input type="checkbox" id="toggle-orphan">
+      <span class="toggle-text">
+        <b>Afficher CPs sans flux</b>
+        <small>Montre en gris les CPs chargés sans affectation dans le plan actuel</small>
+      </span>
+    </label>
   </div>
 
   <div class="panel-section">
@@ -671,6 +701,11 @@ html,body{height:100%;overflow:hidden;
   <div class="panel-section">
     <div class="sec-label">Répartition par flux</div>
     <div class="bar-chart" id="flux-chart"></div>
+  </div>
+
+  <div class="panel-section">
+    <div class="sec-label">📊 KPIs par PMA</div>
+    <div id="kpi-pma"></div>
   </div>
 
   <div class="panel-section">

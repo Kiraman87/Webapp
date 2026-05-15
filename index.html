@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 /* ── Variables ── */
 :root {
@@ -447,6 +448,22 @@ html,body{height:100%;overflow:hidden;
 }
 .store-pin span{color:var(--yellow);font-weight:900;font-size:11px;letter-spacing:.04em;}
 
+/* ── Logistics hub pins (SVG warehouse icons) — styled inline via JS ── */
+
+/* ── Toggle row ── */
+.toggle-row{
+  display:flex;align-items:flex-start;gap:10px;cursor:pointer;
+  padding:8px 10px;border-radius:8px;background:var(--bg);
+  border:1.5px solid transparent;transition:all .15s;user-select:none;
+}
+.toggle-row:hover{background:white;border-color:rgba(0,0,0,.10);}
+.toggle-row input[type=checkbox]{
+  width:16px;height:16px;cursor:pointer;flex-shrink:0;margin-top:1px;accent-color:var(--blue);
+}
+.toggle-text{flex:1;display:flex;flex-direction:column;gap:1px;}
+.toggle-text b{font-size:12px;font-weight:700;color:var(--ink);}
+.toggle-text small{font-size:10px;color:var(--ink-3);line-height:1.3;}
+
 /* ── Badges ── */
 .badge{
   display:inline-block;padding:2px 8px;border-radius:999px;
@@ -470,6 +487,34 @@ html,body{height:100%;overflow:hidden;
 
 /* ── Empty state ── */
 .empty{text-align:center;padding:28px 16px;color:var(--ink-3);font-size:12px;line-height:1.6;}
+
+/* ── Support store ghost pin ── */
+.support-pin{
+  width:36px;height:36px;border-radius:50%;
+  background:#E5E7EB;border:2.5px dashed #9CA3AF;
+  display:grid;place-items:center;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+}
+.support-pin span{color:#6B7280;font-weight:900;font-size:9px;letter-spacing:.04em;}
+
+/* ── Selection toolbar ── */
+#selection-toolbar{
+  position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
+  z-index:500;display:none;align-items:center;gap:10px;flex-wrap:wrap;
+  background:rgba(255,255,255,.98);backdrop-filter:blur(16px);
+  border-radius:12px;padding:10px 16px;
+  border:1.5px solid #06B6D4;
+  box-shadow:0 4px 24px rgba(6,182,212,.25),0 1px 6px rgba(0,0,0,.08);
+}
+
+/* ── Print mode ── */
+@media print {
+  #top-bar,#left-panel,#right-panel,#map-controls,#bottom-drawer,
+  .panel-tab,#map-overlay,#selection-toolbar,#legend { display:none !important; }
+  #map { position:relative !important; }
+  body { overflow:visible !important; }
+  html,body { height:auto !important; }
+}
 </style>
 </head>
 <body>
@@ -525,9 +570,13 @@ html,body{height:100%;overflow:hidden;
     <div class="search-wrap">
       <input class="cp-search" id="cp-search" placeholder="Rechercher un CP…" maxlength="5" autocomplete="off">
     </div>
+    <button class="hdr-btn" onclick="printMap()" title="Imprimer la carte (masque les panneaux)">🖨️</button>
     <button class="hdr-btn" id="export-csv">↓ Export CSV</button>
   </div>
 </header>
+
+<!-- Multi-CP selection toolbar -->
+<div id="selection-toolbar"></div>
 
 <!-- Left panel -->
 <div class="panel" id="left-panel">
@@ -545,7 +594,7 @@ html,body{height:100%;overflow:hidden;
   </div>
 
   <div class="panel-section">
-    <div class="sec-label">Flux par dépôt</div>
+    <div class="sec-label">Flux par BU (Business Unit)</div>
     <div id="flow-list"></div>
   </div>
 
@@ -596,6 +645,31 @@ html,body{height:100%;overflow:hidden;
   </div>
 
   <div class="panel-section">
+    <div class="sec-label">Couches additionnelles</div>
+    <label class="toggle-row" for="toggle-logistics">
+      <input type="checkbox" id="toggle-logistics" checked>
+      <span class="toggle-text">
+        <b>Chaîne logistique CDC/LSC</b>
+        <small>CDC SQF + LSCs intégrés + flèches CCD/LCDI</small>
+      </span>
+    </label>
+    <label class="toggle-row" for="toggle-optimal" style="margin-top:6px">
+      <input type="checkbox" id="toggle-optimal">
+      <span class="toggle-text">
+        <b>Plan optimal distance</b>
+        <small>Colorie chaque CP selon le magasin le plus proche (incl. Clermont, Avignon, Dijon)</small>
+      </span>
+    </label>
+    <label class="toggle-row" for="toggle-orphan" style="margin-top:6px">
+      <input type="checkbox" id="toggle-orphan">
+      <span class="toggle-text">
+        <b>Afficher CPs sans flux</b>
+        <small>Montre en gris les CPs chargés sans affectation dans le plan actuel</small>
+      </span>
+    </label>
+  </div>
+
+  <div class="panel-section">
     <div class="sec-label">Vitesse moyenne estimée</div>
     <div class="speed-row">
       <label>km/h</label>
@@ -630,8 +704,18 @@ html,body{height:100%;overflow:hidden;
   </div>
 
   <div class="panel-section">
+    <div class="sec-label">📊 KPIs par PMA</div>
+    <div id="kpi-pma"></div>
+  </div>
+
+  <div class="panel-section">
     <div class="sec-label">Pistes d'optimisation</div>
     <div id="insights"></div>
+  </div>
+
+  <div class="panel-section">
+    <div class="sec-label">Simulateur inter-PMA</div>
+    <div id="scenario-panel"></div>
   </div>
 </div>
 
@@ -642,7 +726,7 @@ html,body{height:100%;overflow:hidden;
 <div id="bottom-drawer">
   <div class="drawer-tab" id="drawer-tab">
     <span class="drawer-arrow">▲</span>
-    <span id="drawer-label">Tableau détaillé par dépôt</span>
+    <span id="drawer-label">Tableau détaillé par BU</span>
     <span class="drawer-arrow">▲</span>
   </div>
   <div class="drawer-body" id="dept-panel"></div>
